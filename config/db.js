@@ -15,13 +15,17 @@ const connectDB = async () => {
       mongoose.set("debug", false);
     }
 
-    // Fix Node 18+ [DEP0170] Invalid URL parsing for comma-separated replica sets
-    let sanitizedUri = process.env.MONGO_URI;
-    if (sanitizedUri && sanitizedUri.startsWith("mongodb://") && sanitizedUri.includes(",")) {
-      sanitizedUri = sanitizedUri.replace(/,([^\/]+)/g, "");
+    // Support both MONGO_URI and MONGODB_URI env var names (Render default uses MONGODB_URI)
+    const mongoUri = process.env.MONGO_URI || process.env.MONGODB_URI;
+
+    if (!mongoUri) {
+      console.error(
+        "[DB] FATAL: No MongoDB URI found. Set MONGO_URI or MONGODB_URI in your environment variables.",
+      );
+      process.exit(1);
     }
 
-    const conn = await mongoose.connect(sanitizedUri, {
+    const conn = await mongoose.connect(mongoUri, {
       maxPoolSize: 10,
       serverSelectionTimeoutMS: 5000,
       socketTimeoutMS: 45000,
