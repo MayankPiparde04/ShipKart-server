@@ -27,10 +27,10 @@ export const enhancedPacking = async (req, res) => {
       cartons = customCartons.map(
         (c) =>
           new Carton(
-            parseFloat(c.length),
-            parseFloat(c.breadth),
-            parseFloat(c.height),
-            parseFloat(c.maxWeight),
+            Number.parseFloat(c.length),
+            Number.parseFloat(c.breadth),
+            Number.parseFloat(c.height),
+            Number.parseFloat(c.maxWeight),
             {
               id: c.id,
               name: c.name,
@@ -54,10 +54,10 @@ export const enhancedPacking = async (req, res) => {
         .map((box) => {
           // Box model stores dimensions in INCHES and weight in KG
           // Item dimensions are in CM and weight in GRAMS → convert to match
-          const l = (parseFloat(box.length) || 0) * 2.54; // inches → cm
-          const b = (parseFloat(box.breadth) || 0) * 2.54; // inches → cm
-          const h = (parseFloat(box.height) || 0) * 2.54; // inches → cm
-          const mw = (parseFloat(box.max_weight) || 0) * 1000; // kg → grams
+          const l = (Number.parseFloat(box.length) || 0) * 2.54; // inches → cm
+          const b = (Number.parseFloat(box.breadth) || 0) * 2.54; // inches → cm
+          const h = (Number.parseFloat(box.height) || 0) * 2.54; // inches → cm
+          const mw = (Number.parseFloat(box.max_weight) || 0) * 1000; // kg → grams
 
           if (l <= 0 || b <= 0 || h <= 0 || mw <= 0) {
             console.warn(
@@ -71,7 +71,9 @@ export const enhancedPacking = async (req, res) => {
             name: box.box_name,
             // Default to 100 if quantity is 0/unset so the algorithm doesn't skip it
             availableQuantity:
-              parseInt(box.quantity) > 0 ? parseInt(box.quantity) : 100,
+              Number.parseInt(box.quantity, 10) > 0
+                ? Number.parseInt(box.quantity, 10)
+                : 100,
           });
         })
         .filter(Boolean); // remove null entries from invalid boxes
@@ -79,11 +81,11 @@ export const enhancedPacking = async (req, res) => {
 
     // Prepare products
     const productObjects = products.map((p) => {
-      const l = parseFloat(p.length) || 0;
-      const b = parseFloat(p.breadth) || 0;
-      const h = parseFloat(p.height) || 0;
-      const w = parseFloat(p.weight) || 0;
-      const q = parseInt(p.quantity) || 1;
+      const l = Number.parseFloat(p.length) || 0;
+      const b = Number.parseFloat(p.breadth) || 0;
+      const h = Number.parseFloat(p.height) || 0;
+      const w = Number.parseFloat(p.weight) || 0;
+      const q = Number.parseInt(p.quantity, 10) || 1;
 
       if (l <= 0 || b <= 0 || h <= 0 || w <= 0 || q <= 0) {
         throw new Error(
@@ -96,6 +98,12 @@ export const enhancedPacking = async (req, res) => {
         name: p.name,
         isFragile: p.isFragile,
         value: p.price,
+        weightPerUnitKg: Number.parseFloat(p.weight_per_unit) || undefined,
+        maxVerticalStack:
+          Number.parseInt(p.max_vertical_stack, 10) || undefined,
+        crushResistanceKg:
+          Number.parseFloat(p.crush_resistance_kg) || undefined,
+        leakageRisk: p.leakage_risk || undefined,
       });
     });
 
@@ -129,11 +137,11 @@ export const optimalPacking = async (req, res) => {
       });
     }
 
-    const pL = parseFloat(product.length) || 0;
-    const pB = parseFloat(product.breadth) || 0;
-    const pH = parseFloat(product.height) || 0;
-    const pW = parseFloat(product.weight) || 0;
-    const pQ = parseInt(product.quantity) || 1;
+    const pL = Number.parseFloat(product.length) || 0;
+    const pB = Number.parseFloat(product.breadth) || 0;
+    const pH = Number.parseFloat(product.height) || 0;
+    const pW = Number.parseFloat(product.weight) || 0;
+    const pQ = Number.parseInt(product.quantity, 10) || 1;
 
     if (pL <= 0 || pB <= 0 || pH <= 0 || pW <= 0 || pQ <= 0) {
       return res.status(400).json({
@@ -149,10 +157,10 @@ export const optimalPacking = async (req, res) => {
     const cartonObjs = cartons.map(
       (c) =>
         new Carton(
-          parseFloat(c.length),
-          parseFloat(c.breadth),
-          parseFloat(c.height),
-          parseFloat(c.maxWeight),
+          Number.parseFloat(c.length),
+          Number.parseFloat(c.breadth),
+          Number.parseFloat(c.height),
+          Number.parseFloat(c.maxWeight),
           { availableQuantity: 100 }, // Default high quantity for single calc
         ),
     );

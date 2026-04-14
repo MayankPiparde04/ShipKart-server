@@ -1,8 +1,8 @@
 import express from "express";
-import DailyPacked from "../models/dailypacked.model.js";
 import BoxData from "../models/box.model.js";
 import ItemData from "../models/item.model.js";
 import Prediction from "../models/prediction.model.js";
+import Shipment from "../models/shipment.model.js";
 import { authenticateToken } from "../middleware/auth.middleware.js";
 
 const router = express.Router();
@@ -16,9 +16,9 @@ router.get("/overview", authenticateToken, async (req, res) => {
     const userId = req.user._id;
 
     // 1. Total Items Packed (Lifetime)
-    const totalPackedResult = await DailyPacked.aggregate([
-      { $match: { user: userId } },
-      { $group: { _id: null, total: { $sum: "$count" } } },
+    const totalPackedResult = await Shipment.aggregate([
+      { $match: { userId } },
+      { $group: { _id: null, total: { $sum: "$packedQty" } } },
     ]);
     const totalPacked = totalPackedResult[0]?.total || 0;
 
@@ -57,12 +57,17 @@ router.get("/packing-history", authenticateToken, async (req, res) => {
     const userId = req.user._id;
     const sevenDaysAgo = new Date();
     sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
-    const dateStr = sevenDaysAgo.toISOString().slice(0, 10);
 
-    const history = await DailyPacked.find({
-      user: userId,
-      date: { $gte: dateStr },
-    }).sort({ date: 1 });
+    const history = await Shipment.find({
+      userId,
+      packedAt: { $gte: sevenDaysAgo },
+    }).lean();
+
+    const historyMap = {};
+    history.forEach((shipment) => {
+      const dateKey = new Date(shipment.packedAt).toISOString().slice(0, 10);
+      historyMap[dateKey] = (historyMap[dateKey] || 0) + (shipment.packedQty || 0);
+    });
 
     // Fill in missing days with 0
     const result = [];
@@ -71,17 +76,18 @@ router.get("/packing-history", authenticateToken, async (req, res) => {
       d.setDate(d.getDate() - i);
       const dStr = d.toISOString().slice(0, 10);
 
-      const found = history.find((h) => h.date === dStr);
       result.push({
         date: dStr,
-        count: found ? found.count : 0,
+        count: historyMap[dStr] || 0,
         day: d.toLocaleDateString("en-US", { weekday: "short" }),
       });
     }
 
+    const reversedResult = result.toReversed();
+
     res.status(200).json({
       success: true,
-      data: result.reverse(),
+      data: reversedResult,
     });
   } catch (error) {
     console.error("Error fetching packing history:", error);

@@ -1,6 +1,3 @@
-import ItemData from "../models/item.model.js";
-import BoxData from "../models/box.model.js";
-
 // Enhanced Product class with fragility and stacking rules
 class Product {
   constructor(length, breadth, height, weight, quantity, options = {}) {
@@ -25,9 +22,27 @@ class Product {
     this.volume = length * breadth * height;
     this.density = weight / this.volume;
 
+    // Structural integrity properties (required for safe stacking constraints)
+    this.weightPerUnitKg =
+      Number(options.weightPerUnitKg) > 0
+        ? Number(options.weightPerUnitKg)
+        : weight / 1000;
+    this.maxVerticalStack =
+      Number.parseInt(options.maxVerticalStack, 10) > 0
+        ? Number.parseInt(options.maxVerticalStack, 10)
+        : 1;
+    this.crushResistanceKg =
+      Number(options.crushResistanceKg) > 0
+        ? Number(options.crushResistanceKg)
+        : this.weightPerUnitKg * 50;
+    this.leakageRisk = ["High", "Medium", "Low"].includes(options.leakageRisk)
+      ? options.leakageRisk
+      : "Low";
+
     // Fragility and stacking rules
     this.isFragile = options.isFragile || false;
-    this.maxStackHeight = options.maxStackHeight || Math.floor(height * 10); // Default: 10x product height
+    this.maxStackHeight =
+      options.maxStackHeight || this.maxVerticalStack || Math.floor(height * 10); // Backward-compatible alias
     this.maxStackWeight = options.maxStackWeight || weight * 50; // Default: 50x product weight
     this.canRotate = options.canRotate !== false; // Default: true
     this.priority = options.priority || 1; // Higher = more important to pack
@@ -103,6 +118,41 @@ class PackedItem {
   }
 }
 
+function isAxisAlignedOverlap(aMin, aMax, bMin, bMax) {
+  return aMin < bMax && aMax > bMin;
+}
+
+function packedItemsOverlap(firstItem, secondItem) {
+  const firstMaxX = firstItem.position.x + firstItem.dimensions.length;
+  const firstMaxY = firstItem.position.y + firstItem.dimensions.breadth;
+  const firstMaxZ = firstItem.position.z + firstItem.dimensions.height;
+
+  const secondMaxX = secondItem.position.x + secondItem.dimensions.length;
+  const secondMaxY = secondItem.position.y + secondItem.dimensions.breadth;
+  const secondMaxZ = secondItem.position.z + secondItem.dimensions.height;
+
+  return (
+    isAxisAlignedOverlap(
+      firstItem.position.x,
+      firstMaxX,
+      secondItem.position.x,
+      secondMaxX,
+    ) &&
+    isAxisAlignedOverlap(
+      firstItem.position.y,
+      firstMaxY,
+      secondItem.position.y,
+      secondMaxY,
+    ) &&
+    isAxisAlignedOverlap(
+      firstItem.position.z,
+      firstMaxZ,
+      secondItem.position.z,
+      secondMaxZ,
+    )
+  );
+}
+
 // Advanced 3D Bin Packing Algorithm
 class Advanced3DBinPacker {
   constructor() {
@@ -134,8 +184,6 @@ class Advanced3DBinPacker {
 
   // Hybrid approach combining multiple algorithms
   hybridPacking(products, cartons) {
-    const results = [];
-
     // Try different algorithms and pick the best result
     const algorithms = ["ffd", "bfd", "guillotine"];
     let bestResult = null;
@@ -160,8 +208,11 @@ class Advanced3DBinPacker {
 
   // Enhanced First Fit Decreasing with 3D considerations
   firstFitDecreasing(products, cartons) {
-    // Sort products by priority and volume (largest first)
+    // Pass A: Gravity heuristic sort (heaviest units first)
     const sortedProducts = [...products].sort((a, b) => {
+      if (a.weightPerUnitKg !== b.weightPerUnitKg) {
+        return b.weightPerUnitKg - a.weightPerUnitKg;
+      }
       if (a.priority !== b.priority) return b.priority - a.priority;
       return b.volume - a.volume;
     });
@@ -204,6 +255,9 @@ class Advanced3DBinPacker {
   // Enhanced Best Fit Decreasing
   bestFitDecreasing(products, cartons) {
     const sortedProducts = [...products].sort((a, b) => {
+      if (a.weightPerUnitKg !== b.weightPerUnitKg) {
+        return b.weightPerUnitKg - a.weightPerUnitKg;
+      }
       if (a.priority !== b.priority) return b.priority - a.priority;
       return b.volume - a.volume;
     });
@@ -372,26 +426,42 @@ class Advanced3DBinPacker {
     const maxItemsByWeight = Math.floor(carton.maxWeight / product.weight);
 
     // Final quantity considering all constraints
-    const actualItemsPacked = Math.min(
+    const idealItemsPacked = Math.min(
       totalItemsByVolume,
       maxItemsByWeight,
       maxQuantity,
     );
 
-    if (actualItemsPacked === 0) return null;
+    if (idealItemsPacked === 0) return null;
 
-    // Generate 3D layout
-    const packedItems = this.generate3DLayout(
-      product,
-      carton,
-      orientation,
-      itemsPerLength,
-      itemsPerBreadth,
-      actualItemsPacked,
-      pLength,
-      pBreadth,
-      pHeight,
-    );
+    let actualItemsPacked = idealItemsPacked;
+    let packedItems = [];
+    let constraintMessages = [];
+
+    while (actualItemsPacked > 0) {
+      const generatedLayout = this.generate3DLayout(
+        product,
+        carton,
+        orientation,
+        itemsPerLength,
+        itemsPerBreadth,
+        actualItemsPacked,
+        pLength,
+        pBreadth,
+        pHeight,
+      );
+
+      packedItems = generatedLayout.packedItems;
+      constraintMessages = generatedLayout.constraintMessages;
+
+      if (this.validatePackedLayout(packedItems, carton)) {
+        break;
+      }
+
+      actualItemsPacked--;
+    }
+
+    if (actualItemsPacked === 0 || packedItems.length === 0) return null;
 
     // Calculate stacking information
     const stackingInfo = this.analyzeStacking(packedItems, product, carton);
@@ -406,10 +476,43 @@ class Advanced3DBinPacker {
         layers: Math.ceil(actualItemsPacked / itemsPerLayer),
       },
       packedItems,
+      constraintMessages,
       stackingInfo,
       spaceUtilization: this.calculateSpaceUtilization(packedItems, carton),
       centerOfMass: this.calculateCenterOfMass(packedItems, carton),
     };
+  }
+
+  validatePackedLayout(packedItems, carton) {
+    if (!Array.isArray(packedItems) || packedItems.length === 0) {
+      return false;
+    }
+
+    for (let index = 0; index < packedItems.length; index++) {
+      const current = packedItems[index];
+      const currentMaxX = current.position.x + current.dimensions.length;
+      const currentMaxY = current.position.y + current.dimensions.breadth;
+      const currentMaxZ = current.position.z + current.dimensions.height;
+
+      if (
+        current.position.x < 0 ||
+        current.position.y < 0 ||
+        current.position.z < 0 ||
+        currentMaxX > carton.length + 1e-9 ||
+        currentMaxY > carton.breadth + 1e-9 ||
+        currentMaxZ > carton.height + 1e-9
+      ) {
+        return false;
+      }
+
+      for (let otherIndex = index + 1; otherIndex < packedItems.length; otherIndex++) {
+        if (packedItemsOverlap(current, packedItems[otherIndex])) {
+          return false;
+        }
+      }
+    }
+
+    return true;
   }
 
   // Generate detailed 3D layout with positions
@@ -425,14 +528,25 @@ class Advanced3DBinPacker {
     pHeight,
   ) {
     const packedItems = [];
+    const constraintMessages = new Set();
     let itemIndex = 0;
+    const totalSlots = itemsPerLength * itemsPerBreadth;
 
-    for (
-      let layer = 0;
-      layer < Math.ceil(totalItems / (itemsPerLength * itemsPerBreadth));
-      layer++
-    ) {
+    // Maintain per X-Y column stack state
+    const stackState = Array.from({ length: totalSlots }, () => ({
+      size: 0,
+      cumulativeWeightKg: 0,
+      baseCrushResistanceKg: null,
+      topLeakageRisk: null,
+      lockedAbove: false,
+    }));
+
+    const totalLayers = Math.ceil(totalItems / totalSlots);
+
+    for (let layer = 0; layer < totalLayers && itemIndex < totalItems; layer++) {
       const z = layer * pHeight;
+
+      let placedInLayer = 0;
 
       for (
         let breadthIndex = 0;
@@ -446,6 +560,33 @@ class Advanced3DBinPacker {
           lengthIndex < itemsPerLength && itemIndex < totalItems;
           lengthIndex++
         ) {
+          const slotIndex = breadthIndex * itemsPerLength + lengthIndex;
+          const stack = stackState[slotIndex];
+
+          // 1) Vertical stack count check
+          if (stack.size >= product.maxVerticalStack) {
+            constraintMessages.add(
+              `Vertical limit reached: Max ${product.maxVerticalStack} units per stack.`,
+            );
+            continue;
+          }
+
+          // 3) Leakage no-stack zone check
+          if (stack.lockedAbove) {
+            constraintMessages.add("No-Stack Zone: High Leakage Risk detected.");
+            continue;
+          }
+
+          // 2) Cumulative crush-resistance check
+          const baseCrushResistanceKg =
+            stack.baseCrushResistanceKg ?? product.crushResistanceKg;
+          const projectedWeightKg =
+            stack.cumulativeWeightKg + product.weightPerUnitKg;
+          if (projectedWeightKg > baseCrushResistanceKg) {
+            constraintMessages.add("Stacking limited by Base Load Capacity.");
+            continue;
+          }
+
           const x = lengthIndex * pLength;
 
           const position = new Position3D(x, y, z);
@@ -458,27 +599,50 @@ class Advanced3DBinPacker {
 
           packedItems.push(packedItem);
           itemIndex++;
+          placedInLayer++;
+
+          // Update stack state for the placed item
+          stack.size += 1;
+          stack.cumulativeWeightKg = projectedWeightKg;
+          if (stack.baseCrushResistanceKg === null) {
+            stack.baseCrushResistanceKg = product.crushResistanceKg;
+          }
+          stack.topLeakageRisk = product.leakageRisk;
+          if (product.leakageRisk === "High") {
+            stack.lockedAbove = true;
+          }
         }
+      }
+
+      // No placeable slot remains under constraints
+      if (placedInLayer === 0) {
+        break;
       }
     }
 
-    return packedItems;
+    return {
+      packedItems,
+      constraintMessages: Array.from(constraintMessages),
+    };
   }
 
   // Calculate maximum stack layers considering fragility and weight
   calculateMaxStackLayers(product, carton, itemHeight) {
     const maxLayersByHeight = Math.floor(carton.height / itemHeight);
-    const maxLayersByWeight = Math.floor(
-      product.maxStackWeight / product.weight,
-    );
+    const maxLayersByCrush =
+      product.weightPerUnitKg > 0
+        ? Math.floor(product.crushResistanceKg / product.weightPerUnitKg)
+        : maxLayersByHeight;
     const maxLayersByFragility = product.isFragile
       ? Math.min(3, maxLayersByHeight)
       : maxLayersByHeight;
+    const maxLayersByVerticalLimit = Math.max(1, product.maxVerticalStack || 1);
 
     return Math.min(
       maxLayersByHeight,
-      maxLayersByWeight,
+      maxLayersByCrush,
       maxLayersByFragility,
+      maxLayersByVerticalLimit,
       carton.maxStackLayers,
     );
   }
@@ -560,14 +724,25 @@ class Advanced3DBinPacker {
 
   // Calculate various efficiency and quality metrics
   calculateEfficiency(layout, carton) {
+    const totalItemVolume = layout.packedItems.reduce(
+      (sum, item) => sum + item.volume,
+      0,
+    );
+    const totalItemWeight = layout.packedItems.reduce(
+      (sum, item) => sum + item.weight,
+      0,
+    );
+
     return {
-      volumeEfficiency:
-        (layout.itemsPacked * layout.packedItems[0]?.volume || 0) /
-        carton.volume,
+      volumeEfficiency: Math.min(
+        100,
+        carton.volume > 0 ? (totalItemVolume / carton.volume) * 100 : 0,
+      ),
       spaceUtilization: layout.spaceUtilization,
-      weightUtilization:
-        (layout.itemsPacked * (layout.packedItems[0]?.weight || 0)) /
-        carton.maxWeight,
+      weightUtilization: Math.min(
+        100,
+        carton.maxWeight > 0 ? (totalItemWeight / carton.maxWeight) * 100 : 0,
+      ),
     };
   }
 
@@ -610,7 +785,7 @@ class Advanced3DBinPacker {
   }
 
   calculatePackingScore(packingResult) {
-    const efficiency = packingResult.efficiency.volumeEfficiency;
+    const efficiency = packingResult.efficiency.volumeEfficiency / 100;
     const utilization = packingResult.efficiency.spaceUtilization;
     const costFactor = 1 / (packingResult.cost + 1);
 
@@ -628,12 +803,12 @@ class Advanced3DBinPacker {
   calculateStackingScore(layout, product) {
     if (layout.layers <= 1) return 0.5; // Penalize single layer
     if (product.isFragile && layout.layers > 3) return 0.3; // Penalize over-stacking fragile items
-    return Math.min(1.0, layout.layers / 5); // Reward efficient stacking
+    return Math.min(1, layout.layers / 5); // Reward efficient stacking
   }
 
   calculateStabilityScore(layout, carton) {
     // Add null checks
-    if (!layout || !layout.centerOfMass || !carton) {
+    if (!layout?.centerOfMass || !carton) {
       return 0.5; // Default stability score
     }
 
@@ -644,15 +819,13 @@ class Advanced3DBinPacker {
     const centerY = carton.breadth / 2;
     const centerZ = carton.height / 2;
 
-    const distanceFromCenter = Math.sqrt(
-      Math.pow(com.x - centerX, 2) +
-        Math.pow(com.y - centerY, 2) +
-        Math.pow(com.z - centerZ, 2),
+    const distanceFromCenter = Math.hypot(
+      com.x - centerX,
+      com.y - centerY,
+      com.z - centerZ,
     );
 
-    const maxDistance = Math.sqrt(
-      centerX * centerX + centerY * centerY + centerZ * centerZ,
-    );
+    const maxDistance = Math.hypot(centerX, centerY, centerZ);
     return 1 - distanceFromCenter / maxDistance;
   }
 
@@ -661,8 +834,8 @@ class Advanced3DBinPacker {
     const itemsPerLayer = packedItems.filter(
       (item) => item.stackLevel === 1,
     ).length;
-    const averageWeightPerLayer = itemsPerLayer * product.weight;
-    const maxSafeWeight = product.maxStackWeight;
+    const averageWeightPerLayer = itemsPerLayer * product.weightPerUnitKg;
+    const maxSafeWeight = product.crushResistanceKg;
 
     return {
       totalLayers: layers,
@@ -727,7 +900,7 @@ function calculateOverallPackingScore(results) {
   if (!results || results.length === 0) return 0;
   const scores = results.map(
     (r) =>
-      r.efficiency.volumeEfficiency * 0.5 +
+      (r.efficiency.volumeEfficiency / 100) * 0.5 +
       r.efficiency.spaceUtilization * 0.3 +
       (1 - r.packingMetrics.wasteSpace / r.cartonDetails.volume) * 0.2,
   );
@@ -828,14 +1001,15 @@ function calculateOptimalPacking(products, cartons, options = {}) {
     costOptimization = true,
     groupReduction = true,
     fragileHandling = true,
-    maxCartons = Infinity,
   } = options;
 
   // Initialize the advanced packer
   const packer = new Advanced3DBinPacker();
 
   // Ensure products is an array
-  const productArray = Array.isArray(products) ? products : [products];
+  const productArray = (Array.isArray(products) ? products : [products]).sort(
+    (a, b) => (b.weightPerUnitKg || 0) - (a.weightPerUnitKg || 0),
+  );
 
   // Create working copy of cartons with quantities
   const workingCartons = cartons.map((carton, index) => ({
@@ -883,11 +1057,11 @@ function calculateOptimalPacking(products, cartons, options = {}) {
           // Enhanced metrics
           efficiency: {
             volumeEfficiency:
-              Math.round(result.efficiency.volumeEfficiency * 1000) / 10,
+              Math.round(result.efficiency.volumeEfficiency * 10) / 10,
             spaceUtilization:
               Math.round(result.efficiency.spaceUtilization * 1000) / 10,
             weightUtilization:
-              Math.round(result.efficiency.weightUtilization * 1000) / 10,
+              Math.round(result.efficiency.weightUtilization * 10) / 10,
           },
 
           // Layout and stacking information
@@ -934,7 +1108,7 @@ function calculateOptimalPacking(products, cartons, options = {}) {
             stackingPattern: {
               itemsPerLayer: result.layout.itemsPerLayer,
               totalLayers: result.layout.layers,
-              maxSafeStack: product.maxStackHeight,
+              maxSafeStack: product.maxVerticalStack,
               isOptimalStacking: result.layout.layers > 1,
             },
           },
@@ -942,7 +1116,7 @@ function calculateOptimalPacking(products, cartons, options = {}) {
           // Packing efficiency metrics
           packingMetrics: {
             cartonUtilization:
-              Math.round(result.efficiency.spaceUtilization * 100) / 100,
+              Math.round(result.efficiency.spaceUtilization * 1000) / 10,
             wasteSpace:
               Math.round(
                 (result.carton.volume -
@@ -957,6 +1131,7 @@ function calculateOptimalPacking(products, cartons, options = {}) {
               ) / 10,
             spaceOptimality:
               result.layout.itemsPerLayer > 1 ? "Good" : "Could be improved",
+            constraintMessages: result.layout.constraintMessages || [],
           },
 
           packingOrder: allResults.length + 1,
@@ -1082,7 +1257,7 @@ function calculateOptimalPacking(products, cartons, options = {}) {
       packingSuccess: unpackedProducts.length === 0,
       packingRate:
         Math.round((totalItemsPacked / totalRequestedItems) * 1000) / 10,
-      overallVolumeEfficiency: Math.round(avgVolumeEfficiency * 10) / 10,
+      overallVolumeEfficiency: Math.min(100, Math.round(avgVolumeEfficiency * 10) / 10),
       totalCost: Math.round(totalCost * 100) / 100,
       cartonTypeBreakdown: Object.values(cartonTypeAnalysis),
       algorithmUsed: algorithm,

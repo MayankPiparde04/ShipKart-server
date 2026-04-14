@@ -1,7 +1,7 @@
 import ItemData from "../models/item.model.js";
 import DailyAdded from "../models/dailyadded.model.js";
 import { validationResult } from "express-validator";
-import DailyPacked from "../models/dailypacked.model.js";
+import Shipment from "../models/shipment.model.js";
 import mongoose from "mongoose";
 
 // Helper function to get daily transaction data
@@ -86,6 +86,10 @@ export const createOrUpdateItem = async (req, res) => {
       productName,
       quantity,
       weight,
+      weight_per_unit,
+      max_vertical_stack,
+      crush_resistance_kg,
+      leakage_risk,
       price,
       brand,
       dimensions,
@@ -108,6 +112,14 @@ export const createOrUpdateItem = async (req, res) => {
       }
       // Update only provided fields
       if (weight !== undefined) item.weight = weight;
+      if (weight_per_unit !== undefined) item.weight_per_unit = weight_per_unit;
+      if (max_vertical_stack !== undefined) {
+        item.max_vertical_stack = max_vertical_stack;
+      }
+      if (crush_resistance_kg !== undefined) {
+        item.crush_resistance_kg = crush_resistance_kg;
+      }
+      if (leakage_risk !== undefined) item.leakage_risk = leakage_risk;
       if (price !== undefined) item.price = price;
       if (brand !== undefined) item.brand = brand;
       if (category !== undefined) item.category = category;
@@ -160,6 +172,10 @@ export const createOrUpdateItem = async (req, res) => {
         productName: productName.trim(),
         quantity: quantity !== undefined ? quantity : 0,
         weight,
+        weight_per_unit,
+        max_vertical_stack,
+        crush_resistance_kg,
+        leakage_risk,
         price,
         brand,
         dimensions,
@@ -268,7 +284,7 @@ export const getItems = async (req, res) => {
 
     const dailyData = await getDailyTransactionData(req.user._id);
 
-    // Fetch daily sold (packed) data for last 7 days
+    // Fetch daily sold (packed) data for last 7 days from shipment logs
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     const startDate = new Date(today);
@@ -279,13 +295,14 @@ export const getItems = async (req, res) => {
       date.setDate(startDate.getDate() + i);
       daysArr.push(date.toISOString().slice(0, 10));
     }
-    const dailyPackedDocs = await DailyPacked.find({
-      user: req.user._id,
-      date: { $in: daysArr },
+    const shipments = await Shipment.find({
+      userId: req.user._id,
+      packedAt: { $gte: startDate },
     }).lean();
     const soldMap = {};
-    dailyPackedDocs.forEach((doc) => {
-      soldMap[doc.date] = doc.count;
+    shipments.forEach((doc) => {
+      const dateKey = new Date(doc.packedAt).toISOString().slice(0, 10);
+      soldMap[dateKey] = (soldMap[dateKey] || 0) + (doc.packedQty || 0);
     });
     const dailySold = [];
     for (let i = 0; i < 7; i++) {

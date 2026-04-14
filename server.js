@@ -139,6 +139,7 @@ import packingRoutes from "./routes/packing.route.js";
 import shippingRoutes from "./routes/shipping.route.js";
 import geminiRoutes from "./routes/gemini.route.js";
 import analyticsRouter from "./routes/analytics.route.js";
+import inventoryRouter from "./routes/inventory.route.js";
 
 const routes = [
   { path: "/api", router: authRouter },
@@ -148,6 +149,7 @@ const routes = [
   { path: "/api", router: optimalPackingRouter },
   { path: "/api", router: packingRoutes },
   { path: "/api", router: shippingRoutes },
+  { path: "/api/inventory", router: inventoryRouter },
   { path: "/api/ai", router: geminiRoutes },
   { path: "/api/analytics", router: analyticsRouter },
 ];

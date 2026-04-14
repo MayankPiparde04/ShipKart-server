@@ -31,6 +31,26 @@ const validateItemData = [
     .isFloat({ min: 0 })
     .withMessage("Price must be a non-negative number"),
 
+  body("weight_per_unit")
+    .optional()
+    .isFloat({ min: 0 })
+    .withMessage("weight_per_unit must be a non-negative number"),
+
+  body("max_vertical_stack")
+    .optional()
+    .isInt({ min: 1 })
+    .withMessage("max_vertical_stack must be a positive integer"),
+
+  body("crush_resistance_kg")
+    .optional()
+    .isFloat({ min: 0 })
+    .withMessage("crush_resistance_kg must be a non-negative number"),
+
+  body("leakage_risk")
+    .optional()
+    .isIn(["High", "Medium", "Low"])
+    .withMessage("leakage_risk must be one of: High, Medium, Low"),
+
   body("dimensions.length")
     .optional()
     .isFloat({ min: 0 })
