@@ -68,7 +68,13 @@ export const registerController = async (req, res) => {
 
 
     if (process.env.NODE_ENV !== "test") {
-      await sendActivationEmail(email, activationToken, name);
+      try {
+        await sendActivationEmail(email, activationToken, name);
+        console.log(`[EMAIL] Activation email sent to ${email}`);
+      } catch (emailError) {
+        console.error(`[EMAIL] FAILED to send activation email to ${email}:`, emailError.message);
+        // Don't block registration if email fails — user can request resend
+      }
     }
 
     res.status(201).json({
@@ -178,7 +184,13 @@ export const resendActivationController = async (req, res) => {
     await user.save();
 
     if (process.env.NODE_ENV !== "test") {
-      await sendActivationEmail(user.email, activationToken, user.name);
+      try {
+        await sendActivationEmail(user.email, activationToken, user.name);
+        console.log(`[EMAIL] Resent activation email to ${user.email}`);
+      } catch (emailError) {
+        console.error(`[EMAIL] FAILED to resend activation email to ${user.email}:`, emailError.message);
+        throw new Error("Failed to send activation email. Please try again later.");
+      }
     }
 
     res.status(200).json({
@@ -372,7 +384,13 @@ export const forgotPasswordController = async (req, res) => {
 
 
     if (process.env.NODE_ENV !== "test") {
-      await sendPasswordResetEmail(email, resetToken, user.name);
+      try {
+        await sendPasswordResetEmail(email, resetToken, user.name);
+        console.log(`[EMAIL] Password reset email sent to ${email}`);
+      } catch (emailError) {
+        console.error(`[EMAIL] FAILED to send password reset email to ${email}:`, emailError.message);
+        throw new Error("Failed to send password reset email. Please try again later.");
+      }
     }
 
     res.status(200).json({
@@ -443,34 +461,57 @@ export const signoutController = async (req, res) => {
 
 
 const sendActivationEmail = async (email, token, name) => {
+  console.log(`[EMAIL] Attempting to send activation email to: ${email}`);
   const transporter = nodemailer.createTransport({
-    service: "gmail",
+    host: "smtp.gmail.com",
+    port: 465,
+    secure: true,
     auth: {
       user: process.env.EMAIL_FROM,
       pass: process.env.EMAIL_PASSWORD,
     },
   });
 
+  // Verify connection configuration
+  try {
+    await transporter.verify();
+    console.log("[EMAIL] SMTP connection verified successfully");
+  } catch (verifyError) {
+    console.error("[EMAIL] SMTP verification FAILED:", verifyError.message);
+    throw verifyError;
+  }
+
   const emailData = {
-    from: process.env.EMAIL_FROM,
+    from: `"ShipWise" <${process.env.EMAIL_FROM}>`,
     to: email,
-    subject: "Activate Your ShipWise Account",
+    subject: "Activate Your ShipWise Account - ShipWise",
     html: `
-      <h2>Welcome to ShipWise, ${name}!</h2>
-      <p>Please activate your account by entering the following 6-digit OTP in the app:</p>
-      <h1 style="font-size: 32px; letter-spacing: 4px; color: #4f46e5;">${token}</h1>
-      <p>This OTP will expire in 30 minutes.</p>
-      <p>If you didn't create this account, please ignore this email.</p>
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 10px;">
+        <h2 style="color: #4f46e5; text-align: center;">Welcome to ShipWise, ${name}!</h2>
+        <p>Thank you for joining ShipWise. To complete your registration and activate your account, please use the 6-digit verification code below:</p>
+        <div style="background-color: #f3f4f6; padding: 20px; text-align: center; border-radius: 8px; margin: 20px 0;">
+          <h1 style="font-size: 36px; letter-spacing: 6px; color: #1f2937; margin: 0;">${token}</h1>
+        </div>
+        <p>This code will expire in 30 minutes. If you did not sign up for an account, you can safely ignore this email.</p>
+        <hr style="border: none; border-top: 1px solid #e0e0e0; margin: 20px 0;" />
+        <p style="font-size: 12px; color: #6b7280; text-align: center;">
+          ShipWise — Smart Packing & Shipping Solution
+        </p>
+      </div>
     `,
   };
 
-  await transporter.sendMail(emailData);
+  const info = await transporter.sendMail(emailData);
+  console.log(`[EMAIL] Activation email sent. MessageId: ${info.messageId}`);
 };
 
 
 const sendPasswordResetEmail = async (email, token, name) => {
+  console.log(`[EMAIL] Attempting to send reset email to: ${email}`);
   const transporter = nodemailer.createTransport({
-    service: "gmail",
+    host: "smtp.gmail.com",
+    port: 465,
+    secure: true,
     auth: {
       user: process.env.EMAIL_FROM,
       pass: process.env.EMAIL_PASSWORD,
@@ -478,20 +519,30 @@ const sendPasswordResetEmail = async (email, token, name) => {
   });
 
   const emailData = {
-    from: process.env.EMAIL_FROM,
+    from: `"ShipWise Support" <${process.env.EMAIL_FROM}>`,
     to: email,
-    subject: "Password Reset - ShipWise",
+    subject: "Reset Your Password - ShipWise",
     html: `
-      <h2>Password Reset Request</h2>
-      <p>Hello ${name},</p>
-      <p>You requested a password reset. Click the link below to reset your password:</p>
-      <p><a href="${process.env.CLIENT_URL}/auth/reset-password/${token}">Reset Password</a></p>
-      <p>This link will expire in 15 minutes.</p>
-      <p>If you didn't request this, please ignore this email.</p>
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 10px;">
+        <h2 style="color: #4f46e5; text-align: center;">Password Reset Request</h2>
+        <p>Hello ${name},</p>
+        <p>You recently requested to reset your password for your ShipWise account. Click the button below to proceed:</p>
+        <div style="text-align: center; margin: 30px 0;">
+          <a href="${process.env.CLIENT_URL}/auth/reset-password/${token}" 
+             style="background-color: #4f46e5; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: bold; display: inline-block;">
+            Reset Password
+          </a>
+        </div>
+        <p>This link will expire in 15 minutes. If you did not request a password reset, please ignore this email.</p>
+        <p style="font-size: 12px; color: #6b7280;">
+          For security, this link can only be used once. If it doesn't work, please request a new link.
+        </p>
+      </div>
     `,
   };
 
-  await transporter.sendMail(emailData);
+  const info = await transporter.sendMail(emailData);
+  console.log(`[EMAIL] Reset email sent. MessageId: ${info.messageId}`);
 };
 
 
