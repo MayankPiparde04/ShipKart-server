@@ -16,7 +16,7 @@ const connectDB = async () => {
     }
 
     // Support both MONGO_URI and MONGODB_URI env var names (Render default uses MONGODB_URI)
-    const mongoUri = process.env.MONGO_URI || process.env.MONGODB_URI;
+    let mongoUri = process.env.MONGO_URI || process.env.MONGODB_URI;
 
     if (!mongoUri) {
       console.error(
@@ -25,14 +25,15 @@ const connectDB = async () => {
       process.exit(1);
     }
 
+    // Strip accidental surrounding quotes and whitespace (common Render env var issue)
+    mongoUri = mongoUri.trim().replace(/^["']|["']$/g, "");
+
+    console.log(`[DB] Connecting to MongoDB...`);
+
     const conn = await mongoose.connect(mongoUri, {
       maxPoolSize: 10,
-      serverSelectionTimeoutMS: 5000,
+      serverSelectionTimeoutMS: 10000,
       socketTimeoutMS: 45000,
-      useNewUrlParser: true,
-      useUnifiedTopology: true,
-      useCreateIndex: true,
-      useFindAndModify: false,
     });
 
     dbStatus = {
