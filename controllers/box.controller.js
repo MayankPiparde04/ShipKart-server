@@ -399,12 +399,10 @@ export const removeBoxQuantity = async (req, res) => {
 
     await box.save();
 
-    // Record daily packed statistics
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
+    const todayStr = new Date().toISOString().slice(0, 10);
 
     await DailyPacked.findOneAndUpdate(
-      { date: today },
+      { user: req.user._id, date: todayStr },
       { $inc: { count: quantityToRemove } },
       { upsert: true, new: true },
     );
@@ -501,12 +499,10 @@ export const removeBoxItem = async (req, res) => {
       await item.save();
     }
 
-    // Record statistics
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
+    const todayStr = new Date().toISOString().slice(0, 10);
 
     await DailyPacked.findOneAndUpdate(
-      { date: today },
+      { user: req.user._id, date: todayStr },
       { $inc: { count: boxesToRemove } },
       { upsert: true, new: true },
     );

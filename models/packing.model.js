@@ -1,6 +1,11 @@
 import mongoose from "mongoose";
 
 const PackingSchema = new mongoose.Schema({
+  userId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: "User",
+    index: true,
+  },
   productName: { type: String, required: false },
   shape: { type: String, required: false },
   weight: { type: Number, required: false },

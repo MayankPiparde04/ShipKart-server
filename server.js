@@ -3,30 +3,28 @@ import morgan from "morgan";
 import helmet from "helmet";
 import compression from "compression";
 import rateLimit from "express-rate-limit";
-import connectDB from "./config/db.js";
-import bodyParser from "body-parser";
+import connectDB, { getDBStatus } from "./config/db.js";
 import cors from "cors";
 import dotenv from "dotenv";
-import path from "path";
-import { fileURLToPath } from "url";
-import os from "os";
+import crypto from "crypto";
 
-// Load environment variables
 dotenv.config({ path: "./config/config.env" });
 
 const app = express();
 
-// Set trust proxy for correct client IP detection (important for Vercel/Proxies)
 app.set("trust proxy", 1);
 
-// Connect to the database
 connectDB();
 
-// Security middleware
-app.use(helmet()); // Set various HTTP headers for security
-app.use(compression()); // Compress responses
+app.use(helmet());
+app.use(compression());
 
-// Block access to .git and other sensitive paths
+app.use((req, res, next) => {
+  req.requestId = crypto.randomUUID();
+  res.setHeader("X-Request-Id", req.requestId);
+  next();
+});
+
 app.use((req, res, next) => {
   const blockedPaths = [
     "/.git",
@@ -36,70 +34,102 @@ app.use((req, res, next) => {
     "/package.json",
     "/node_modules",
   ];
-
-  if (blockedPaths.some((path) => req.url.startsWith(path))) {
-    return res.status(404).json({
-      success: false,
-      message: "Not found",
-    });
+  if (blockedPaths.some((p) => req.url.startsWith(p))) {
+    return res.status(404).json({ success: false, message: "Not found" });
   }
   next();
 });
 
-// Rate limiting with different limits for different endpoints
 const strictLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 20, // Limit AI endpoints to 20 requests per windowMs
+  windowMs: 15 * 60 * 1000,
+  max: 20,
   message: {
     success: false,
     message: "Too many AI requests from this IP, please try again later.",
   },
+  standardHeaders: true,
+  legacyHeaders: false,
 });
 
 const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // Limit each IP to 100 requests per windowMs
+  windowMs: 15 * 60 * 1000,
+  max: 100,
   message: {
     success: false,
     message: "Too many requests from this IP, please try again later.",
   },
+  standardHeaders: true,
+  legacyHeaders: false,
 });
 
-// Apply strict rate limiting to AI endpoints
 app.use("/api/ai", strictLimiter);
 app.use(limiter);
 
-// Body parsing middleware with size limits
-app.use(bodyParser.json({ limit: "10mb" }));
-app.use(bodyParser.urlencoded({ extended: true, limit: "10mb" }));
+app.use(express.json({ limit: "10mb" }));
+app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 
-// CORS configuration
-const corsOptions = {
-  origin: "*", // Allow all origins for Expo dev environment flexibly
-  methods: ["GET", "POST", "PUT", "DELETE", "PATCH"],
-  allowedHeaders: ["Content-Type", "Authorization"],
-  credentials: true,
-};
-app.use(cors(corsOptions));
+const allowedOrigins = process.env.ALLOWED_ORIGINS
+  ? process.env.ALLOWED_ORIGINS.split(",")
+  : [];
 
-// Logging middleware
+app.use(
+  cors({
+    origin: (origin, callback) => {
+      // Mobile applications (React Native/Expo) typically don't send an Origin header.
+      // We allow requests with no origin to permit mobile app traffic.
+      if (!origin) return callback(null, true);
+
+      // If it's a web browser (Origin exists), it must be in the whitelist or localhost.
+      if (
+        allowedOrigins.length === 0 ||
+        allowedOrigins.includes(origin) ||
+        origin.startsWith("http://localhost") ||
+        origin.startsWith("http://192.168.")
+      ) {
+        return callback(null, true);
+      }
+
+      callback(new Error("Blocked by CORS policy"));
+    },
+    methods: ["GET", "POST", "PUT", "DELETE", "PATCH"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+  }),
+);
+
 if (process.env.NODE_ENV === "development") {
   app.use(morgan("dev"));
 } else {
-  app.use(morgan("combined"));
+  app.use(
+    morgan(":method :url :status :response-time ms - :req[x-request-id]"),
+  );
 }
 
-// Health check endpoint
 app.get("/health", (req, res) => {
-  res.status(200).json({
-    success: true,
-    message: "Server is running",
+  const dbStatus = getDBStatus();
+  const memUsage = process.memoryUsage();
+
+  const isHealthy = dbStatus.state === "connected";
+
+  res.status(isHealthy ? 200 : 503).json({
+    success: isHealthy,
+    status: isHealthy ? "healthy" : "degraded",
     timestamp: new Date().toISOString(),
-    environment: process.env.NODE_ENV,
+    uptime: Math.floor(process.uptime()),
+    environment: process.env.NODE_ENV || "production",
+    database: {
+      state: dbStatus.state,
+      host: dbStatus.host,
+      name: dbStatus.name,
+    },
+    memory: {
+      rss: `${Math.round(memUsage.rss / 1024 / 1024)}MB`,
+      heapUsed: `${Math.round(memUsage.heapUsed / 1024 / 1024)}MB`,
+      heapTotal: `${Math.round(memUsage.heapTotal / 1024 / 1024)}MB`,
+    },
+    version: process.env.npm_package_version || "1.0.0",
   });
 });
 
-// Route Imports
 import authRouter from "./routes/auth.route.js";
 import userRouter from "./routes/user.route.js";
 import itemRouter from "./routes/item.route.js";
@@ -110,7 +140,6 @@ import shippingRoutes from "./routes/shipping.route.js";
 import geminiRoutes from "./routes/gemini.route.js";
 import analyticsRouter from "./routes/analytics.route.js";
 
-// Mount Routes with error handling
 const routes = [
   { path: "/api", router: authRouter },
   { path: "/api", router: userRouter },
@@ -127,10 +156,8 @@ routes.forEach(({ path, router }) => {
   app.use(path, router);
 });
 
-// Add error handler for invalid JSON
 app.use((err, req, res, next) => {
   if (err instanceof SyntaxError && err.status === 400 && "body" in err) {
-    // Handle invalid JSON
     return res.status(400).json({
       success: false,
       message: "Invalid JSON in request body",
@@ -139,20 +166,14 @@ app.use((err, req, res, next) => {
   next(err);
 });
 
-// Enhanced global error handling middleware
 app.use((err, req, res, next) => {
-  // Log error details for debugging
-  console.error("Unhandled error:", {
+  console.error(`[${req.requestId}] Unhandled error:`, {
     message: err.message,
     stack: process.env.NODE_ENV === "development" ? err.stack : undefined,
     url: req.url,
     method: req.method,
-    ip: req.ip,
-    userAgent: req.get("User-Agent"),
-    timestamp: new Date().toISOString(),
   });
 
-  // Handle specific error types
   if (err.name === "ValidationError") {
     return res.status(400).json({
       success: false,
@@ -181,94 +202,47 @@ app.use((err, req, res, next) => {
       process.env.NODE_ENV === "development"
         ? err.message
         : "Internal server error",
-    ...(process.env.NODE_ENV === "development" && { stack: err.stack }),
   });
 });
 
-// Handle 404 Errors
 app.use("*", (req, res) => {
   res.status(404).json({
     success: false,
     message: `Route ${req.originalUrl} not found`,
-    availableRoutes: [
-      "GET /health",
-      "POST /api/optimal-packing2",
-      "POST /api/calculate-shipping",
-      "POST /api/ai/predict-dimensions",
-      "GET /api/carton-sizes",
-    ],
   });
 });
 
-// Graceful shutdown and global error handling
 process.on("unhandledRejection", (err) => {
-  console.error("Unhandled Promise Rejection:", err);
-  // Keep server running for unhandled rejections instead of crashing
+  console.error("Unhandled Promise Rejection:", err.message || err);
 });
 
 process.on("uncaughtException", (err) => {
-  console.error("Uncaught Exception thrown:", err);
-  // Keep server running for now, though standard practice is to restart
+  console.error("Uncaught Exception:", err.message || err);
 });
 
 process.on("SIGTERM", () => {
   console.log("SIGTERM received. Shutting down gracefully...");
-  process.exit(0);
-});
-
-process.on("SIGINT", () => {
-  console.log("SIGINT received. Shutting down gracefully...");
-  process.exit(0);
-});
-
-// Start the Server only if directly executed (esMain check simulation)
-const __filename = fileURLToPath(import.meta.url);
-const isMainModule = process.argv[1] === __filename;
-
-if (isMainModule) {
-  const PORT = process.env.PORT || 3001;
-  // Get local network IPv4 addresses
-  function getLocalIPs() {
-    const interfaces = os.networkInterfaces();
-    const ips = [];
-    for (const name of Object.keys(interfaces)) {
-      for (const iface of interfaces[name]) {
-        if (iface.family === "IPv4" && !iface.internal) {
-          ips.push(iface.address);
-        }
-      }
-    }
-    return ips;
+  if (server) {
+    server.close(() => process.exit(0));
+  } else {
+    process.exit(0);
   }
+});
 
-  const server = app.listen(PORT, "0.0.0.0", () => {
-    const ips = getLocalIPs();
-    console.log(
-      `🚀 Server running in ${process.env.NODE_ENV} mode on port ${PORT}`,
-    );
-    if (ips.length) {
-      ips.forEach((ip) =>
-        console.log(
-          `📊 Health check available at: http://${ip}:${PORT}/health`,
-        ),
-      );
-    } else {
-      console.log(
-        `📊 Health check available at: http://localhost:${PORT}/health`,
-      );
-    }
-  });
+const PORT = process.env.PORT || 3001;
+const server = app.listen(PORT, () => {
+  console.log(
+    `🚀 Server running in ${process.env.NODE_ENV || "production"} mode on port ${PORT}`,
+  );
+  console.log(`📊 Health Check API active on port ${PORT}`);
+});
 
-  // Handle server errors
-  server.on("error", (error) => {
-    if (error.code === "EADDRINUSE") {
-      console.error(`Port ${PORT} is already in use`);
-      process.exit(1);
-    } else {
-      console.error("Server error:", error);
-    }
-  });
-}
+server.on("error", (error) => {
+  if (error.code === "EADDRINUSE") {
+    console.error(`Port ${PORT} is already in use`);
+    process.exit(1);
+  }
+  console.error("Server error:", error.message);
+});
 
-// Export default app
 export default app;

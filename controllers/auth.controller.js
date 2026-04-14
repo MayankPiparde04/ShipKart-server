@@ -3,8 +3,9 @@ import { validationResult } from "express-validator";
 import jwt from "jsonwebtoken";
 import { v4 as uuidv4 } from "uuid";
 import nodemailer from "nodemailer";
+import crypto from "crypto";
 
-// Generate JWT tokens
+
 const generateTokens = (userId) => {
   const accessToken = jwt.sign({ _id: userId }, process.env.JWT_SECRET, {
     expiresIn: process.env.JWT_EXPIRES_IN || "1h",
@@ -19,7 +20,7 @@ const generateTokens = (userId) => {
   return { accessToken, refreshToken };
 };
 
-// Register controller
+
 export const registerController = async (req, res) => {
   try {
     const errors = validationResult(req);
@@ -33,7 +34,7 @@ export const registerController = async (req, res) => {
 
     const { name, email, password, phone } = req.body;
 
-    // Check if user already exists
+
     const existingUser = await User.findOne({
       $or: [{ email: email.toLowerCase() }, { phone }],
     });
@@ -45,15 +46,13 @@ export const registerController = async (req, res) => {
       });
     }
 
-    // Generate activation token (6-digit OTP)
-    const activationToken = Math.floor(
-      100000 + Math.random() * 900000,
-    ).toString();
+
+    const activationToken = crypto.randomInt(100000, 1000000).toString();
     const activationTokenExpiry = new Date(
       Date.now() + 60 * 60 * 1000 * 24 * 30,
     ); // 30 days
 
-    // Create user - SET isActive to false during registration
+
     const newUser = new User({
       name: name.trim(),
       email: email.toLowerCase(),
@@ -67,7 +66,7 @@ export const registerController = async (req, res) => {
 
     await newUser.save();
 
-    // Send activation email
+
     if (process.env.NODE_ENV !== "test") {
       await sendActivationEmail(email, activationToken, name);
     }
@@ -81,7 +80,7 @@ export const registerController = async (req, res) => {
       },
     });
   } catch (error) {
-    // Handle duplicate key error (race condition)
+
     if (error.code === 11000) {
       return res.status(409).json({
         success: false,
@@ -96,7 +95,7 @@ export const registerController = async (req, res) => {
   }
 };
 
-// Account activation
+
 export const activationController = async (req, res) => {
   try {
     const { email, otp } = req.body;
@@ -122,14 +121,13 @@ export const activationController = async (req, res) => {
       });
     }
 
-    // Activate user - SET BOTH emailVerified AND isActive to true
     user.emailVerified = true;
-    user.isActive = true; // IMPORTANT: Activate the user account
+    user.isActive = true;
     user.activationToken = undefined;
     user.activationTokenExpiry = undefined;
     await user.save();
 
-    // Generate tokens to log them in directly
+
     const { accessToken, refreshToken } = generateTokens(user._id);
 
     res.status(200).json({
@@ -146,7 +144,7 @@ export const activationController = async (req, res) => {
   }
 };
 
-// Resend Activation Controller
+
 export const resendActivationController = async (req, res) => {
   try {
     const { email } = req.body;
@@ -171,10 +169,8 @@ export const resendActivationController = async (req, res) => {
         });
     }
 
-    // Generate new OTP
-    const activationToken = Math.floor(
-      100000 + Math.random() * 900000,
-    ).toString();
+
+    const activationToken = crypto.randomInt(100000, 1000000).toString();
     const activationTokenExpiry = new Date(Date.now() + 30 * 60 * 1000); // 30 minutes
 
     user.activationToken = activationToken;
@@ -197,11 +193,9 @@ export const resendActivationController = async (req, res) => {
   }
 };
 
-// Sign in controller
 export const signinController = async (req, res) => {
   try {
     const errors = validationResult(req);
-    console.log(errors);
     if (!errors.isEmpty()) {
       return res.status(400).json({
         success: false,
@@ -212,7 +206,6 @@ export const signinController = async (req, res) => {
 
     const { email, password, deviceInfo } = req.body;
 
-    // Find user - check both emailVerified AND isActive
     const user = await User.findOne({
       email: email.toLowerCase(),
     });
@@ -246,14 +239,14 @@ export const signinController = async (req, res) => {
       });
     }
 
-    // Update last login and device info
+
     user.lastLogin = new Date();
     if (deviceInfo) {
       user.deviceInfo = deviceInfo;
     }
     await user.save();
 
-    // Generate tokens
+
     const { accessToken, refreshToken } = generateTokens(user._id);
 
     res.status(200).json({
@@ -283,7 +276,7 @@ export const signinController = async (req, res) => {
   }
 };
 
-// Refresh token controller - FIXED
+
 export const refreshTokenController = async (req, res) => {
   try {
     const { refreshToken } = req.body;
@@ -335,7 +328,7 @@ export const refreshTokenController = async (req, res) => {
       });
     }
 
-    // Generate new tokens
+
     const tokens = generateTokens(user._id);
 
     res.status(200).json({
@@ -352,7 +345,7 @@ export const refreshTokenController = async (req, res) => {
   }
 };
 
-// Forgot password controller
+
 export const forgotPasswordController = async (req, res) => {
   try {
     const { email } = req.body;
@@ -369,7 +362,7 @@ export const forgotPasswordController = async (req, res) => {
       });
     }
 
-    // Generate reset token
+
     const resetToken = uuidv4();
     const resetTokenExpiry = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes
 
@@ -377,7 +370,7 @@ export const forgotPasswordController = async (req, res) => {
     user.resetTokenExpiry = resetTokenExpiry;
     await user.save();
 
-    // Send reset email
+
     if (process.env.NODE_ENV !== "test") {
       await sendPasswordResetEmail(email, resetToken, user.name);
     }
@@ -395,7 +388,7 @@ export const forgotPasswordController = async (req, res) => {
   }
 };
 
-// Reset password controller
+
 export const resetPasswordController = async (req, res) => {
   try {
     const { token, newPassword } = req.body;
@@ -412,7 +405,7 @@ export const resetPasswordController = async (req, res) => {
       });
     }
 
-    // Update password
+
     user.password = newPassword;
     user.resetToken = undefined;
     user.resetTokenExpiry = undefined;
@@ -431,10 +424,10 @@ export const resetPasswordController = async (req, res) => {
   }
 };
 
-// Sign out controller
+
 export const signoutController = async (req, res) => {
   try {
-    // In a production app, you might want to blacklist the token
+
     res.status(200).json({
       success: true,
       message: "Signed out successfully",
@@ -448,7 +441,7 @@ export const signoutController = async (req, res) => {
   }
 };
 
-// Helper function to send activation email
+
 const sendActivationEmail = async (email, token, name) => {
   const transporter = nodemailer.createTransport({
     service: "gmail",
@@ -474,7 +467,7 @@ const sendActivationEmail = async (email, token, name) => {
   await transporter.sendMail(emailData);
 };
 
-// Helper function to send password reset email
+
 const sendPasswordResetEmail = async (email, token, name) => {
   const transporter = nodemailer.createTransport({
     service: "gmail",
@@ -501,7 +494,7 @@ const sendPasswordResetEmail = async (email, token, name) => {
   await transporter.sendMail(emailData);
 };
 
-// Check if user is verified (activated) by email
+
 export const checkVerifiedController = async (req, res) => {
   try {
     const { email } = req.body;

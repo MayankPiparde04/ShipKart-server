@@ -53,7 +53,7 @@ router.post(
   "/addbox",
   authenticateToken,
   sanitizeInput,
-  // validateBoxData,
+  validateBoxData,
   boxController.addBox,
 );
 

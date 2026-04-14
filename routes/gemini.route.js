@@ -78,8 +78,8 @@ async function cleanupFile(filePath) {
   }
 }
 
-// Helper function for retry logic
-async function retryWithDelay(fn, retries = 3, delay = 2000) {
+// Helper function for retry logic with exponential backoff
+async function retryWithDelay(fn, retries = 5, delay = 2000) {
   for (let i = 0; i < retries; i++) {
     try {
       return await fn();
@@ -89,17 +89,18 @@ async function retryWithDelay(fn, retries = 3, delay = 2000) {
         error.message.includes("503") ||
         error.message.includes("overloaded") ||
         error.message.includes("quota") ||
-        error.message.includes("rate limit");
+        error.message.includes("rate limit") ||
+        error.message.includes("500");
 
       if (!isRetryableError || isLastAttempt) {
         throw error;
       }
 
+      const backoffDelay = delay * Math.pow(2, i);
       console.warn(
-        `Attempt ${i + 1} failed, retrying in ${delay}ms...`,
-        error.message,
+        `[Gemini AI] Attempt ${i + 1} failed, retrying in ${backoffDelay}ms... Error: ${error.message}`,
       );
-      await new Promise((resolve) => setTimeout(resolve, delay * (i + 1))); // Exponential backoff
+      await new Promise((resolve) => setTimeout(resolve, backoffDelay));
     }
   }
 }
@@ -150,15 +151,17 @@ Requirements:
 1. Identify the product name (main object in the image)
 2. Estimate its length, breadth (width), and height in centimeters (cm)
 3. Estimate its weight in grams (g)
-4. Estimate its price in Rupees (Rs.)
-5. Identify the product category (e.g., electronics, apparel, etc.)
-6. Provide confidence level for your estimates
-7. If uncertain, indicate lower confidence
+4. Estimate its estimated retail price in Rupees (Rs.)
+5. Identify the manufacturer brand (if visible, otherwise output "Unknown")
+6. Identify the product category (e.g., electronics, apparel, etc.)
+7. Provide confidence level for your estimates
 
 Return response in this exact JSON format:
 {
   "product_name": "identified product name",
+  "brand": "brand name if visible, otherwise Unknown",
   "category": "product category",
+  "price": number,
   "dimensions": {
     "length": number,
     "breadth": number,
@@ -171,9 +174,7 @@ Return response in this exact JSON format:
     "confidence": "low|medium|high"
   },
   "confidence_level": "low|medium|high",
-  "notes": "any additional observations",
-  "price": number
-
+  "notes": "any additional observations"
 }
 
 Be as accurate as possible with measurements. If uncertain, indicate lower confidence.`;
@@ -231,17 +232,17 @@ Be as accurate as possible with measurements. If uncertain, indicate lower confi
       // Save prediction to database
       const prediction = new Prediction({
         userId: req.user._id,
-        // imageUrl: req.file.path, // Uncomment if you want to store file path
         productName: parsedResult.product_name,
+        brand: parsedResult.brand || "Unknown",
         category: parsedResult.category,
         dimensions: parsedResult.dimensions,
         weight: parsedResult.weight,
-        price: parsedResult.price,
+        price: parsedResult.price || 0,
         confidenceLevel: parsedResult.confidence_level,
         notes: parsedResult.notes,
         processingInfo: {
           processingTime: Date.now() - startTime,
-          modelUsed: "gemini-1.5-flash",
+          modelUsed: "gemini-2.5-flash",
         },
       });
 

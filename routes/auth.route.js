@@ -1,5 +1,4 @@
 import express from "express";
-// Load Controllers
 import {
   registerController,
   activationController,
@@ -12,7 +11,6 @@ import {
   resendActivationController,
 } from "../controllers/auth.controller.js";
 
-// Load Middleware
 import {
   authRateLimit,
   passwordResetRateLimit,
@@ -29,7 +27,7 @@ import {
 
 const router = express.Router();
 
-// Authentication Routes
+
 router.post(
   "/register",
   authRateLimit,
@@ -46,10 +44,10 @@ router.post(
   signinController,
 );
 
-// Changed activation to POST and takes email + otp from body
+
 router.post("/activation", sanitizeInput, activationController);
 
-// Resend activation OTP route
+
 router.post("/resend-activation", sanitizeInput, resendActivationController);
 
 router.post("/refresh-token", sanitizeInput, refreshTokenController);
@@ -71,7 +69,7 @@ router.post(
 
 router.post("/signout", signoutController);
 
-// Add route to check if user is verified
+
 router.post("/check-verified", sanitizeInput, checkVerifiedController);
 
 export default router;

@@ -1,8 +1,6 @@
 import User from "../models/auth.model.js";
 import { validationResult } from "express-validator";
-import bcrypt from "bcryptjs";
 
-// Get user profile by ID
 export const readController = async (req, res) => {
   try {
     const userId = req.params.id;
@@ -39,10 +37,9 @@ export const readController = async (req, res) => {
   }
 };
 
-// Update user profile
 export const updateController = async (req, res) => {
   try {
-    // Validate request data
+
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
       return res.status(400).json({
@@ -55,7 +52,7 @@ export const updateController = async (req, res) => {
     const { name, phone, address, company } = req.body;
     const userId = req.user._id;
 
-    // Find user
+
     const user = await User.findById(userId);
     if (!user) {
       return res.status(404).json({
@@ -63,7 +60,6 @@ export const updateController = async (req, res) => {
         message: "User not found",
       });
     }
-    console.log(name, phone, address, company, userId);
 
     const updateData = {};
 
@@ -101,7 +97,6 @@ export const updateController = async (req, res) => {
   }
 };
 
-// Get current user profile
 export const getProfileController = async (req, res) => {
   try {
     const user = await User.findById(req.user._id)
@@ -128,7 +123,6 @@ export const getProfileController = async (req, res) => {
   }
 };
 
-// Delete user account
 export const deleteController = async (req, res) => {
   try {
     const userId = req.user._id;

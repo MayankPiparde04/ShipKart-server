@@ -16,6 +16,14 @@ const PredictionSchema = new mongoose.Schema(
       type: String,
       required: true,
     },
+    brand: {
+      type: String,
+      default: "Unknown",
+    },
+    price: {
+      type: Number,
+      default: 0,
+    },
     category: {
       type: String,
       default: "Uncategorized",
