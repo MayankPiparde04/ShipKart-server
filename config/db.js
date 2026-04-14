@@ -15,25 +15,44 @@ const connectDB = async () => {
       mongoose.set("debug", false);
     }
 
-    // Support both MONGO_URI and MONGODB_URI env var names (Render default uses MONGODB_URI)
+    // Support both MONGO_URI and MONGODB_URI env var names
     let mongoUri = process.env.MONGO_URI || process.env.MONGODB_URI;
 
     if (!mongoUri) {
       console.error(
-        "[DB] FATAL: No MongoDB URI found. Set MONGO_URI or MONGODB_URI in your environment variables.",
+        "[DB] FATAL: No MongoDB URI found. Set MONGO_URI or MONGODB_URI in environment variables.",
       );
       process.exit(1);
     }
 
     // Strip accidental surrounding quotes and whitespace (common Render env var issue)
-    mongoUri = mongoUri.trim().replace(/^["']|["']$/g, "");
+    mongoUri = mongoUri.trim().replace(/^[\"']|[\"']$/g, "");
 
-    console.log(`[DB] Connecting to MongoDB...`);
+    // Auto URL-encode password special characters and enforce /shipwise database name
+    try {
+      const url = new URL(mongoUri);
+      // Re-encode password to handle special chars like @, <, >, #, %
+      if (url.password) {
+        url.password = encodeURIComponent(decodeURIComponent(url.password));
+      }
+      // Enforce database name if path is empty
+      if (!url.pathname || url.pathname === "/") {
+        url.pathname = "/shipwise";
+      }
+      mongoUri = url.toString();
+    } catch {
+      // Not a parseable URL (e.g. old-style replica set URI) — leave as-is
+    }
+
+    console.log("[DB] Connecting to MongoDB...");
 
     const conn = await mongoose.connect(mongoUri, {
+      dbName: "shipwise", // Always connect to 'shipwise' regardless of URI path
       maxPoolSize: 10,
       serverSelectionTimeoutMS: 10000,
       socketTimeoutMS: 45000,
+      useNewUrlParser: true,
+      useUnifiedTopology: true,
     });
 
     dbStatus = {
