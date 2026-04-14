@@ -83,8 +83,6 @@ const connectDB = async () => {
     dbStatus = { state: "connected", host: conn.connection.host, name: conn.connection.name };
     retryCount = 0;
 
-    console.log(`🗄️  MongoDB Connected: ${conn.connection.host}`);
-    console.log(`📊 Database: ${conn.connection.name}`);
 
     mongoose.connection.on("error", (err) => {
       console.error("MongoDB error:", err.message);
@@ -111,7 +109,6 @@ const connectDB = async () => {
 
     if (retryCount < MAX_RETRIES) {
       retryCount++;
-      console.log(`Retrying (${retryCount}/${MAX_RETRIES}) in 5 seconds...`);
       setTimeout(connectDB, 5000);
     } else {
       console.error("Max DB retries reached. Giving up.");

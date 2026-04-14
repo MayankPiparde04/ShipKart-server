@@ -77,17 +77,24 @@ export const validateProfileUpdate = [
 
 // Password reset validation
 export const validatePasswordReset = [
-  body('newPassword')
-    .isLength({ min: 6, max: 128 })
-    .withMessage('Password must be between 6-128 characters')
-    .matches(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)/)
-    .withMessage('Password must contain at least one lowercase, one uppercase letter and one number'),
-    
-  body('token')
+  body('email')
+    .isEmail()
+    .normalizeEmail()
+    .withMessage('Please provide a valid email'),
+
+  body('otp')
     .notEmpty()
-    .withMessage('Reset token is required')
-    .isLength({ min: 32, max: 64 })
-    .withMessage('Invalid token format')
+    .withMessage('OTP is required')
+    .isLength({ min: 6, max: 6 })
+    .withMessage('OTP must be a 6-digit code')
+    .isNumeric()
+    .withMessage('OTP must be numeric'),
+
+  body('newPassword')
+    .isLength({ min: 8, max: 128 })
+    .withMessage('Password must be between 8-128 characters')
+    .matches(/^(?=.*[^A-Za-z0-9]).{8,}$/)
+    .withMessage('Password must contain at least one special character')
 ];
 
 // Email validation
@@ -151,7 +158,7 @@ export const sanitizeInput = (req, res, next) => {
   // Remove any null bytes
   for (const key in req.body) {
     if (typeof req.body[key] === 'string') {
-      req.body[key] = req.body[key].replace(/\0/g, '');
+      req.body[key] = req.body[key].replaceAll('\0', '');
     }
   }
   

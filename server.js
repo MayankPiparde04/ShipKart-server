@@ -6,7 +6,7 @@ import rateLimit from "express-rate-limit";
 import connectDB, { getDBStatus } from "./config/db.js";
 import cors from "cors";
 import dotenv from "dotenv";
-import crypto from "crypto";
+import crypto from "node:crypto";
 
 dotenv.config({ path: "./config/config.env" });
 
@@ -143,6 +143,7 @@ import inventoryRouter from "./routes/inventory.route.js";
 
 const routes = [
   { path: "/api", router: authRouter },
+  { path: "/api/auth", router: authRouter },
   { path: "/api", router: userRouter },
   { path: "/api", router: itemRouter },
   { path: "/api", router: boxRouter },
@@ -223,7 +224,6 @@ process.on("uncaughtException", (err) => {
 });
 
 process.on("SIGTERM", () => {
-  console.log("SIGTERM received. Shutting down gracefully...");
   if (server) {
     server.close(() => process.exit(0));
   } else {
@@ -232,12 +232,7 @@ process.on("SIGTERM", () => {
 });
 
 const PORT = process.env.PORT || 3001;
-const server = app.listen(PORT, () => {
-  console.log(
-    `🚀 Server running in ${process.env.NODE_ENV || "production"} mode on port ${PORT}`,
-  );
-  console.log(`📊 Health Check API active on port ${PORT}`);
-});
+const server = app.listen(PORT, () => {});
 
 server.on("error", (error) => {
   if (error.code === "EADDRINUSE") {

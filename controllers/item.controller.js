@@ -3,6 +3,7 @@ import DailyAdded from "../models/dailyadded.model.js";
 import { validationResult } from "express-validator";
 import Shipment from "../models/shipment.model.js";
 import mongoose from "mongoose";
+import { getDayName, getLastNDates, toDateKey } from "../utils/date.utils.js";
 
 // Helper function to get daily transaction data
 async function getDailyTransactionData(userId) {
@@ -10,19 +11,8 @@ async function getDailyTransactionData(userId) {
     const userObjectId =
       typeof userId === "string" ? new mongoose.Types.ObjectId(userId) : userId;
 
-    // Calculate start and end dates for the last 7 days (including today)
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const startDate = new Date(today);
-    startDate.setDate(today.getDate() - 6);
-
-    // Build array of last 7 days in YYYY-MM-DD format
-    const daysArr = [];
-    for (let i = 0; i < 7; i++) {
-      const date = new Date(startDate);
-      date.setDate(startDate.getDate() + i);
-      daysArr.push(date.toISOString().slice(0, 10));
-    }
+    const dateWindow = getLastNDates(7);
+    const daysArr = dateWindow.map((date) => toDateKey(date));
 
     // Fetch daily added counts for the user for the last 7 days
     const dailyAddedDocs = await DailyAdded.find({
@@ -37,26 +27,14 @@ async function getDailyTransactionData(userId) {
     });
 
     // Build result for each of the last 7 days
-    const result = [];
-    for (let i = 0; i < 7; i++) {
-      const date = new Date(startDate);
-      date.setDate(startDate.getDate() + i);
-      const dateStr = date.toISOString().slice(0, 10);
-      const dayName = [
-        "Sunday",
-        "Monday",
-        "Tuesday",
-        "Wednesday",
-        "Thursday",
-        "Friday",
-        "Saturday",
-      ][date.getDay()];
-      result.push({
+    const result = dateWindow.map((date) => {
+      const dateStr = toDateKey(date);
+      return {
         date: dateStr,
-        day: dayName,
+        day: getDayName(date),
         quantity: dataMap[dateStr] || 0,
-      });
-    }
+      };
+    });
 
     return {
       success: true,
@@ -105,9 +83,8 @@ export const createOrUpdateItem = async (req, res) => {
 
     if (item) {
       // Calculate difference in quantity if quantity is being updated
-      let quantityDiff = 0;
+      const previousQuantity = Number(item.quantity);
       if (quantity !== undefined) {
-        quantityDiff = Math.abs(Number(quantity) - Number(item.quantity));
         item.quantity = quantity;
       }
       // Update only provided fields
@@ -138,10 +115,10 @@ export const createOrUpdateItem = async (req, res) => {
       await item.save();
 
       // Increment daily added count by abs difference if quantity was updated and only if increased
-      if (quantity !== undefined && Number(quantity) > Number(item.quantity)) {
-        const quantityDiff = Number(quantity) - Number(item.quantity);
+      if (quantity !== undefined && Number(quantity) > previousQuantity) {
+        const quantityDiff = Number(quantity) - previousQuantity;
         if (quantityDiff > 0) {
-          const todayStr = new Date().toISOString().slice(0, 10);
+          const todayStr = toDateKey();
           const dailyDoc = await DailyAdded.findOne({
             user: req.user._id,
             date: todayStr,
@@ -193,7 +170,7 @@ export const createOrUpdateItem = async (req, res) => {
       await newItem.save();
 
       // Increment daily added count
-      const todayStr = new Date().toISOString().slice(0, 10);
+      const todayStr = toDateKey();
       const addCount = quantity !== undefined ? Math.abs(Number(quantity)) : 0;
       const dailyDoc = await DailyAdded.findOne({
         user: req.user._id,
@@ -285,45 +262,26 @@ export const getItems = async (req, res) => {
     const dailyData = await getDailyTransactionData(req.user._id);
 
     // Fetch daily sold (packed) data for last 7 days from shipment logs
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const startDate = new Date(today);
-    startDate.setDate(today.getDate() - 6);
-    const daysArr = [];
-    for (let i = 0; i < 7; i++) {
-      const date = new Date(startDate);
-      date.setDate(startDate.getDate() + i);
-      daysArr.push(date.toISOString().slice(0, 10));
-    }
+    const dateWindow = getLastNDates(7);
+    const startDate = dateWindow[0];
     const shipments = await Shipment.find({
       userId: req.user._id,
+      isArchived: { $ne: true },
       packedAt: { $gte: startDate },
     }).lean();
     const soldMap = {};
     shipments.forEach((doc) => {
-      const dateKey = new Date(doc.packedAt).toISOString().slice(0, 10);
+      const dateKey = toDateKey(doc.packedAt);
       soldMap[dateKey] = (soldMap[dateKey] || 0) + (doc.packedQty || 0);
     });
-    const dailySold = [];
-    for (let i = 0; i < 7; i++) {
-      const date = new Date(startDate);
-      date.setDate(startDate.getDate() + i);
-      const dateStr = date.toISOString().slice(0, 10);
-      const dayName = [
-        "Sunday",
-        "Monday",
-        "Tuesday",
-        "Wednesday",
-        "Thursday",
-        "Friday",
-        "Saturday",
-      ][date.getDay()];
-      dailySold.push({
+    const dailySold = dateWindow.map((date) => {
+      const dateStr = toDateKey(date);
+      return {
         date: dateStr,
-        day: dayName,
+        day: getDayName(date),
         quantity: soldMap[dateStr] || 0,
-      });
-    }
+      };
+    });
 
     return res.status(200).json({
       success: true,

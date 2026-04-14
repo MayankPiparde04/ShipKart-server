@@ -5,6 +5,58 @@ import {
 } from "../services/packing.service.js";
 import BoxData from "../models/box.model.js";
 
+function canFitInAnyRotation(product, carton) {
+  const productDimensions = [product.length, product.breadth, product.height]
+    .map((value) => Number(value) || 0)
+    .sort((a, b) => a - b);
+  const cartonDimensions = [carton.length, carton.breadth, carton.height]
+    .map((value) => Number(value) || 0)
+    .sort((a, b) => a - b);
+
+  return (
+    productDimensions[0] <= cartonDimensions[0] &&
+    productDimensions[1] <= cartonDimensions[1] &&
+    productDimensions[2] <= cartonDimensions[2]
+  );
+}
+
+function getLargestCarton(cartons) {
+  if (!Array.isArray(cartons) || cartons.length === 0) return null;
+
+  return cartons.reduce((largest, current) => {
+    const largestVolume =
+      Number(largest.volume) ||
+      Number(largest.length) * Number(largest.breadth) * Number(largest.height) ||
+      0;
+    const currentVolume =
+      Number(current.volume) ||
+      Number(current.length) * Number(current.breadth) * Number(current.height) ||
+      0;
+
+    return currentVolume > largestVolume ? current : largest;
+  }, cartons[0]);
+}
+
+function mapPackingErrorMessage(message) {
+  if (message.includes("No boxes found in inventory")) {
+    return "No suitable box found.";
+  }
+
+  if (message.includes("Item is too large for any available carton")) {
+    return "No suitable box found.";
+  }
+
+  if (message.includes("Stacking constraints prevent packing")) {
+    return "Stacking constraints prevent packing.";
+  }
+
+  if (message.includes("No suitable box found")) {
+    return "No suitable box found.";
+  }
+
+  return null;
+}
+
 // Enhanced endpoint for multiple products packing
 export const enhancedPacking = async (req, res) => {
   try {
@@ -107,6 +159,26 @@ export const enhancedPacking = async (req, res) => {
       });
     });
 
+    const largestCarton = getLargestCarton(cartons);
+    if (!largestCarton) {
+      return res.status(400).json({
+        success: false,
+        message: "No suitable box found.",
+      });
+    }
+
+    const incompatibleProduct = productObjects.find(
+      (product) => !canFitInAnyRotation(product, largestCarton),
+    );
+
+    if (incompatibleProduct) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Item is too large for any available carton in your inventory.",
+      });
+    }
+
     // Calculate packing
     const result = calculateOptimalPacking(productObjects, cartons, options);
 
@@ -116,7 +188,16 @@ export const enhancedPacking = async (req, res) => {
       ...result,
     });
   } catch (error) {
-    console.error("Error in enhanced packing:", error);
+    console.error("Error in enhanced packing:", error?.stack || error);
+
+    const mappedMessage = mapPackingErrorMessage(error?.message || "");
+    if (mappedMessage) {
+      return res.status(400).json({
+        success: false,
+        message: mappedMessage,
+      });
+    }
+
     res.status(500).json({
       success: false,
       message: "Error calculating packing solution",

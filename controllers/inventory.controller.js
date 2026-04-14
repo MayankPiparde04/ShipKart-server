@@ -4,8 +4,7 @@ import ItemData from "../models/item.model.js";
 import BoxData from "../models/box.model.js";
 import Shipment from "../models/shipment.model.js";
 import DailyPacked from "../models/dailypacked.model.js";
-
-const toDateKey = (date) => date.toISOString().slice(0, 10);
+import { toDateKey } from "../utils/date.utils.js";
 
 export const packInventory = async (req, res) => {
   const session = await mongoose.startSession();
@@ -20,7 +19,7 @@ export const packInventory = async (req, res) => {
       });
     }
 
-    const { productId, packedQty, cartonsUsed } = req.body;
+    const { productId, packedQty, cartonsUsed, packingMetadata } = req.body;
     const quantityToPack = Number.parseInt(packedQty, 10);
 
     if (!productId || !mongoose.Types.ObjectId.isValid(productId)) {
@@ -57,6 +56,11 @@ export const packInventory = async (req, res) => {
           }))
           .filter((carton) => carton.cartonId)
       : [];
+
+    const sanitizedPackingMetadata =
+      packingMetadata && typeof packingMetadata === "object" && !Array.isArray(packingMetadata)
+        ? packingMetadata
+        : null;
 
     await session.withTransaction(async () => {
       const item = await ItemData.findOne({
@@ -134,6 +138,10 @@ export const packInventory = async (req, res) => {
             items_packed: quantityToPack,
             box_type: shipmentBoxType,
             cartonsUsed: sanitizedCartons,
+            metadata: sanitizedPackingMetadata,
+            packed_details: {
+              packingResults: sanitizedPackingMetadata?.packingResults || sanitizedCartons,
+            },
             packedAt: new Date(),
             timestamp: new Date(),
           },
@@ -147,6 +155,10 @@ export const packInventory = async (req, res) => {
         { $inc: { count: quantityToPack } },
         { upsert: true, new: true, session },
       );
+    }, {
+      readConcern: { level: "snapshot" },
+      writeConcern: { w: "majority" },
+      readPreference: "primary",
     });
 
     return res.status(200).json({
@@ -156,7 +168,11 @@ export const packInventory = async (req, res) => {
   } catch (error) {
     console.error("Error packing inventory:", error);
 
-    return res.status(400).json({
+    const statusCode = /not found|insufficient|invalid|required|failed/i.test(error.message)
+      ? 400
+      : 500;
+
+    return res.status(statusCode).json({
       success: false,
       message: error.message || "Failed to pack inventory",
     });

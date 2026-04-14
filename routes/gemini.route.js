@@ -1,9 +1,9 @@
 import express from "express";
 import multer from "multer";
 import { GoogleGenAI } from "@google/genai";
-import fs from "fs/promises";
-import path from "path";
-import { fileURLToPath } from "url";
+import fs from "node:fs/promises";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import Prediction from "../models/prediction.model.js";
 import { authenticateToken } from "../middleware/auth.middleware.js";
 import { sanitizeInput } from "../middleware/validation.middleware.js";
@@ -123,7 +123,7 @@ router.post(
       }
 
       filePath = req.file.path;
-      const { referenceObject, unit = "cm", additionalContext } = req.body;
+      const { referenceObject, unit = "cm" } = req.body;
 
       // Validate inputs
       if (referenceObject && typeof referenceObject !== "string") {
@@ -180,8 +180,8 @@ Return response in this exact JSON format:
 Be as accurate as possible with measurements. If uncertain, indicate lower confidence.`;
 
       // Generate response with retry logic using new Google GenAI SDK
-      const retryAttempts = parseInt(process.env.GEMINI_RETRY_ATTEMPTS) || 3;
-      const retryDelay = parseInt(process.env.GEMINI_RETRY_DELAY) || 2000;
+      const retryAttempts = Number.parseInt(process.env.GEMINI_RETRY_ATTEMPTS) || 3;
+      const retryDelay = Number.parseInt(process.env.GEMINI_RETRY_DELAY) || 2000;
 
       const result = await retryWithDelay(
         async () => {
@@ -250,11 +250,6 @@ Be as accurate as possible with measurements. If uncertain, indicate lower confi
 
       // Clean up uploaded file
       await cleanupFile(filePath);
-
-      // Log successful prediction for analytics
-      console.log(
-        `Dimension prediction stored for user ${req.user._id}: ${parsedResult.product_name}`,
-      );
 
       res.status(200).json({
         success: true,
@@ -338,7 +333,7 @@ router.get("/prediction-history", authenticateToken, async (req, res) => {
     const predictions = await Prediction.find({ userId: req.user._id })
       .sort({ createdAt: -1 })
       .skip(skip)
-      .limit(parseInt(limit));
+      .limit(Number.parseInt(limit));
 
     const total = await Prediction.countDocuments({ userId: req.user._id });
 
@@ -348,7 +343,7 @@ router.get("/prediction-history", authenticateToken, async (req, res) => {
       data: {
         predictions,
         pagination: {
-          currentPage: parseInt(page),
+          currentPage: Number.parseInt(page),
           totalPages: Math.ceil(total / limit),
           totalPredictions: total,
         },

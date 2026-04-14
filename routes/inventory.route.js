@@ -18,6 +18,7 @@ router.post(
       .isInt({ min: 1 })
       .withMessage("packedQty must be a positive integer"),
     body("cartonsUsed").optional().isArray(),
+    body("packingMetadata").optional().isObject(),
   ],
   packInventory,
 );

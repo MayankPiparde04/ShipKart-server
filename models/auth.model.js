@@ -63,6 +63,11 @@ const userSchema = new mongoose.Schema(
     activationTokenExpiry: Date,
     resetToken: String,
     resetTokenExpiry: Date,
+    resetOtpVerified: {
+      type: Boolean,
+      default: false,
+    },
+    resetOtpVerifiedAt: Date,
     lastLogin: Date,
     loginAttempts: {
       type: Number,
@@ -148,7 +153,7 @@ userSchema.methods = {
   },
 
   makeSalt: function () {
-    return Math.round(new Date().valueOf() * Math.random()) + "";
+    return Math.round(Date.now() * Math.random()) + "";
   },
 
   // Method to handle failed login attempts

@@ -1,23 +1,61 @@
 import User from "../models/auth.model.js";
 import { validationResult } from "express-validator";
 import jwt from "jsonwebtoken";
-import { v4 as uuidv4 } from "uuid";
 import nodemailer from "nodemailer";
-import crypto from "crypto";
+import crypto from "node:crypto";
+import bcrypt from "bcryptjs";
 
+const OTP_VALIDITY_MS = 5 * 60 * 1000;
+const ACCESS_TOKEN_EXPIRES_IN = "7d";
+const REFRESH_TOKEN_EXPIRES_IN = "7d";
 
 const generateTokens = (userId) => {
   const accessToken = jwt.sign({ _id: userId }, process.env.JWT_SECRET, {
-    expiresIn: process.env.JWT_EXPIRES_IN || "1h",
+    expiresIn: ACCESS_TOKEN_EXPIRES_IN,
   });
 
   const refreshToken = jwt.sign(
     { _id: userId, type: "refresh" },
     process.env.JWT_REFRESH_SECRET,
-    { expiresIn: process.env.JWT_REFRESH_EXPIRES_IN || "14d" },
+    { expiresIn: REFRESH_TOKEN_EXPIRES_IN },
   );
 
   return { accessToken, refreshToken };
+};
+
+const generateOtpCode = () => crypto.randomInt(100000, 1000000).toString();
+
+const buildOtpEmailTemplate = ({
+  name,
+  otpCode,
+  title,
+  subtitle,
+  note,
+}) => {
+  return `
+    <div style="margin:0; padding:24px; background:#001224; font-family:Arial,sans-serif; color:#E5F2FF;">
+      <div style="max-width:560px; margin:0 auto; background:#001933; border:1px solid #054161; border-radius:16px; padding:28px; text-align:center;">
+        <div style="font-size:28px; font-weight:800; color:#E5F2FF; letter-spacing:0.6px;">ShipWise</div>
+        <div style="margin-top:4px; font-size:12px; letter-spacing:2px; color:#99CCFF; text-transform:uppercase;">Logistics Intelligence</div>
+
+        <h2 style="margin:22px 0 8px; color:#E5F2FF; font-size:22px;">${title}</h2>
+        <p style="margin:0 0 14px; color:#C7E6FF; font-size:15px;">Hello ${name || "there"}, ${subtitle}</p>
+
+        <p style="margin:0 0 10px; color:#E5F2FF; font-size:15px;">Your Verification Code:</p>
+        <div style="margin:0 auto 18px; padding:14px 16px; border-radius:12px; border:1px solid #054161; background:#001224; width:fit-content; min-width:220px;">
+          <span style="font-size:36px; font-weight:800; color:#007FFF; letter-spacing:10px;">${otpCode}</span>
+        </div>
+
+        <p style="margin:0; color:#99CCFF; font-size:13px; line-height:1.5;">${note}</p>
+
+        <hr style="border:none; border-top:1px solid #054161; margin:20px 0 14px;" />
+        <p style="margin:0; color:#C7E6FF; font-size:13px; line-height:1.6;">
+          Thank you for choosing ShipWise to optimize your logistics journey!<br />
+          <span style="color:#99CCFF;">- The ShipWise Team</span>
+        </p>
+      </div>
+    </div>
+  `;
 };
 
 
@@ -47,10 +85,8 @@ export const registerController = async (req, res) => {
     }
 
 
-    const activationToken = crypto.randomInt(100000, 1000000).toString();
-    const activationTokenExpiry = new Date(
-      Date.now() + 60 * 60 * 1000 * 24 * 30,
-    ); // 30 days
+    const activationToken = generateOtpCode();
+    const activationTokenExpiry = new Date(Date.now() + OTP_VALIDITY_MS);
 
 
     const newUser = new User({
@@ -70,7 +106,6 @@ export const registerController = async (req, res) => {
     if (process.env.NODE_ENV !== "test") {
       try {
         await sendActivationEmail(email, activationToken, name);
-        console.log(`[EMAIL] Activation email sent to ${email}`);
       } catch (emailError) {
         console.error(`[EMAIL] FAILED to send activation email to ${email}:`, emailError.message);
         // Don't block registration if email fails — user can request resend
@@ -79,7 +114,7 @@ export const registerController = async (req, res) => {
 
     res.status(201).json({
       success: true,
-      message: `Registration successful. Activation email sent to ${email}`,
+      message: `Registration successful. Activation OTP sent to ${email}`,
       data: {
         email,
         activationRequired: true,
@@ -116,11 +151,13 @@ export const activationController = async (req, res) => {
     const user = await User.findOne({
       email: email.toLowerCase(),
       activationToken: otp,
-      activationTokenExpiry: { $gt: new Date() },
       emailVerified: false,
     });
 
-    if (!user) {
+    if (
+      !user?.activationTokenExpiry ||
+      Date.now() > new Date(user.activationTokenExpiry).getTime()
+    ) {
       return res.status(400).json({
         success: false,
         message: "Invalid or expired OTP",
@@ -176,8 +213,8 @@ export const resendActivationController = async (req, res) => {
     }
 
 
-    const activationToken = crypto.randomInt(100000, 1000000).toString();
-    const activationTokenExpiry = new Date(Date.now() + 30 * 60 * 1000); // 30 minutes
+    const activationToken = generateOtpCode();
+    const activationTokenExpiry = new Date(Date.now() + OTP_VALIDITY_MS);
 
     user.activationToken = activationToken;
     user.activationTokenExpiry = activationTokenExpiry;
@@ -186,7 +223,6 @@ export const resendActivationController = async (req, res) => {
     if (process.env.NODE_ENV !== "test") {
       try {
         await sendActivationEmail(user.email, activationToken, user.name);
-        console.log(`[EMAIL] Resent activation email to ${user.email}`);
       } catch (emailError) {
         console.error(`[EMAIL] FAILED to resend activation email to ${user.email}:`, emailError.message);
         throw new Error("Failed to send activation email. Please try again later.");
@@ -362,40 +398,48 @@ export const forgotPasswordController = async (req, res) => {
   try {
     const { email } = req.body;
 
-    const user = await User.findOne({
-      email: email.toLowerCase(),
-      isActive: true,
-    });
-
-    if (!user) {
-      return res.status(404).json({
+    if (!email) {
+      return res.status(400).json({
         success: false,
-        message: "User not found",
+        message: "Email is required",
       });
     }
 
+    const user = await User.findOne({
+      email: email.toLowerCase(),
+      isActive: true,
+      emailVerified: true,
+    });
 
-    const resetToken = uuidv4();
-    const resetTokenExpiry = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes
+    if (!user) {
+      return res.status(200).json({
+        success: true,
+        message: "If the account exists, an OTP has been sent.",
+      });
+    }
+
+    const resetToken = generateOtpCode();
+    const resetTokenExpiry = new Date(Date.now() + OTP_VALIDITY_MS);
 
     user.resetToken = resetToken;
     user.resetTokenExpiry = resetTokenExpiry;
+    user.resetOtpVerified = false;
+    user.resetOtpVerifiedAt = undefined;
     await user.save();
 
 
     if (process.env.NODE_ENV !== "test") {
       try {
         await sendPasswordResetEmail(email, resetToken, user.name);
-        console.log(`[EMAIL] Password reset email sent to ${email}`);
       } catch (emailError) {
-        console.error(`[EMAIL] FAILED to send password reset email to ${email}:`, emailError.message);
-        throw new Error("Failed to send password reset email. Please try again later.");
+        console.error(`[EMAIL] FAILED to send password reset OTP to ${email}:`, emailError.message);
+        throw new Error("Failed to send password reset OTP. Please try again later.");
       }
     }
 
     res.status(200).json({
       success: true,
-      message: "Password reset link sent to your email",
+      message: "OTP sent to your email",
     });
   } catch (error) {
     console.error("Forgot password error:", error);
@@ -406,28 +450,122 @@ export const forgotPasswordController = async (req, res) => {
   }
 };
 
-
-export const resetPasswordController = async (req, res) => {
+export const verifyForgotPasswordOtpController = async (req, res) => {
   try {
-    const { token, newPassword } = req.body;
+    const { email, otp } = req.body;
 
-    const user = await User.findOne({
-      resetToken: token,
-      resetTokenExpiry: { $gt: new Date() },
-    });
-
-    if (!user) {
+    if (!email || !otp) {
       return res.status(400).json({
         success: false,
-        message: "Invalid or expired reset token",
+        message: "Email and OTP are required",
       });
     }
 
+    const now = new Date();
+    const verifiedUser = await User.findOneAndUpdate(
+      {
+        email: email.toLowerCase(),
+        resetToken: otp,
+        isActive: true,
+        emailVerified: true,
+        resetTokenExpiry: { $gt: now },
+      },
+      {
+        $set: {
+          resetOtpVerified: true,
+          resetOtpVerifiedAt: now,
+        },
+      },
+      { new: true },
+    );
 
-    user.password = newPassword;
-    user.resetToken = undefined;
-    user.resetTokenExpiry = undefined;
-    await user.save();
+    if (!verifiedUser) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid or expired OTP",
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      message: "OTP verified successfully",
+    });
+  } catch (error) {
+    console.error("Verify forgot password OTP error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Internal server error",
+    });
+  }
+};
+
+
+export const resetPasswordController = async (req, res) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({
+        success: false,
+        message: "Validation failed",
+        errors: errors.array(),
+      });
+    }
+
+    const { email, otp, newPassword } = req.body;
+
+    if (!email || !otp || !newPassword) {
+      return res.status(400).json({
+        success: false,
+        message: "Email, OTP and new password are required",
+      });
+    }
+
+    const strongPasswordPattern = /^(?=.*[^A-Za-z0-9]).{8,}$/;
+    if (!strongPasswordPattern.test(newPassword)) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Password must be at least 8 characters and contain at least one special character",
+      });
+    }
+
+    const now = new Date();
+    const verifiedCutoff = new Date(Date.now() - OTP_VALIDITY_MS);
+
+    const salt = await bcrypt.genSalt(12);
+    const hashedPassword = await bcrypt.hash(newPassword, salt);
+
+    const updatedUser = await User.findOneAndUpdate(
+      {
+        email: email.toLowerCase(),
+        resetToken: otp,
+        isActive: true,
+        emailVerified: true,
+        resetTokenExpiry: { $gt: now },
+        resetOtpVerified: true,
+        resetOtpVerifiedAt: { $gte: verifiedCutoff },
+      },
+      {
+        $set: {
+          salt,
+          hashed_password: hashedPassword,
+        },
+        $unset: {
+          resetToken: 1,
+          resetTokenExpiry: 1,
+          resetOtpVerified: 1,
+          resetOtpVerifiedAt: 1,
+        },
+      },
+      { new: true },
+    );
+
+    if (!updatedUser) {
+      return res.status(401).json({
+        success: false,
+        message: "Invalid, expired, or unverified OTP session",
+      });
+    }
 
     res.status(200).json({
       success: true,
@@ -461,7 +599,6 @@ export const signoutController = async (req, res) => {
 
 
 const sendActivationEmail = async (email, token, name) => {
-  console.log(`[EMAIL] Attempting to send activation email to: ${email}`);
   const transporter = nodemailer.createTransport({
     host: "smtp.gmail.com",
     port: 465,
@@ -475,7 +612,6 @@ const sendActivationEmail = async (email, token, name) => {
   // Verify connection configuration
   try {
     await transporter.verify();
-    console.log("[EMAIL] SMTP connection verified successfully");
   } catch (verifyError) {
     console.error("[EMAIL] SMTP verification FAILED:", verifyError.message);
     throw verifyError;
@@ -484,30 +620,21 @@ const sendActivationEmail = async (email, token, name) => {
   const emailData = {
     from: `"ShipWise" <${process.env.EMAIL_FROM}>`,
     to: email,
-    subject: "Activate Your ShipWise Account - ShipWise",
-    html: `
-      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 10px;">
-        <h2 style="color: #4f46e5; text-align: center;">Welcome to ShipWise, ${name}!</h2>
-        <p>Thank you for joining ShipWise. To complete your registration and activate your account, please use the 6-digit verification code below:</p>
-        <div style="background-color: #f3f4f6; padding: 20px; text-align: center; border-radius: 8px; margin: 20px 0;">
-          <h1 style="font-size: 36px; letter-spacing: 6px; color: #1f2937; margin: 0;">${token}</h1>
-        </div>
-        <p>This code will expire in 30 minutes. If you did not sign up for an account, you can safely ignore this email.</p>
-        <hr style="border: none; border-top: 1px solid #e0e0e0; margin: 20px 0;" />
-        <p style="font-size: 12px; color: #6b7280; text-align: center;">
-          ShipWise — Smart Packing & Shipping Solution
-        </p>
-      </div>
-    `,
+    subject: "ShipWise Verification Code",
+    html: buildOtpEmailTemplate({
+      name,
+      otpCode: token,
+      title: "Verify Your ShipWise Account",
+      subtitle: "please use the OTP below to complete your sign up.",
+      note: "This code is valid for 5 minutes. Do not share it with anyone.",
+    }),
   };
 
-  const info = await transporter.sendMail(emailData);
-  console.log(`[EMAIL] Activation email sent. MessageId: ${info.messageId}`);
+  await transporter.sendMail(emailData);
 };
 
 
 const sendPasswordResetEmail = async (email, token, name) => {
-  console.log(`[EMAIL] Attempting to send reset email to: ${email}`);
   const transporter = nodemailer.createTransport({
     host: "smtp.gmail.com",
     port: 465,
@@ -521,28 +648,17 @@ const sendPasswordResetEmail = async (email, token, name) => {
   const emailData = {
     from: `"ShipWise Support" <${process.env.EMAIL_FROM}>`,
     to: email,
-    subject: "Reset Your Password - ShipWise",
-    html: `
-      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 10px;">
-        <h2 style="color: #4f46e5; text-align: center;">Password Reset Request</h2>
-        <p>Hello ${name},</p>
-        <p>You recently requested to reset your password for your ShipWise account. Click the button below to proceed:</p>
-        <div style="text-align: center; margin: 30px 0;">
-          <a href="${process.env.CLIENT_URL}/auth/reset-password/${token}" 
-             style="background-color: #4f46e5; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: bold; display: inline-block;">
-            Reset Password
-          </a>
-        </div>
-        <p>This link will expire in 15 minutes. If you did not request a password reset, please ignore this email.</p>
-        <p style="font-size: 12px; color: #6b7280;">
-          For security, this link can only be used once. If it doesn't work, please request a new link.
-        </p>
-      </div>
-    `,
+    subject: "ShipWise Password Reset OTP",
+    html: buildOtpEmailTemplate({
+      name,
+      otpCode: token,
+      title: "Reset Your ShipWise Password",
+      subtitle: "please use the OTP below to continue your password reset.",
+      note: "This code is valid for 5 minutes. Do not share it with anyone.",
+    }),
   };
 
-  const info = await transporter.sendMail(emailData);
-  console.log(`[EMAIL] Reset email sent. MessageId: ${info.messageId}`);
+  await transporter.sendMail(emailData);
 };
 
 

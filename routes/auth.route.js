@@ -5,6 +5,7 @@ import {
   signinController,
   refreshTokenController,
   forgotPasswordController,
+  verifyForgotPasswordOtpController,
   resetPasswordController,
   signoutController,
   checkVerifiedController,
@@ -19,8 +20,6 @@ import {
   validateRegistration,
   validateLogin,
   validateEmail,
-  validateToken,
-  validateRefreshToken,
   validatePasswordReset,
   sanitizeInput,
 } from "../middleware/validation.middleware.js";
@@ -61,7 +60,15 @@ router.post(
 );
 
 router.post(
+  "/verify-forgot-password-otp",
+  passwordResetRateLimit,
+  sanitizeInput,
+  verifyForgotPasswordOtpController,
+);
+
+router.post(
   "/reset-password",
+  passwordResetRateLimit,
   sanitizeInput,
   validatePasswordReset,
   resetPasswordController,

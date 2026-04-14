@@ -2,6 +2,7 @@ import BoxData from "../models/box.model.js";
 import ItemData from "../models/item.model.js";
 import DailyPacked from "../models/dailypacked.model.js";
 import { validationResult } from "express-validator";
+import { toDateKey } from "../utils/date.utils.js";
 
 // Add a new box
 export const addBox = async (req, res) => {
@@ -399,7 +400,7 @@ export const removeBoxQuantity = async (req, res) => {
 
     await box.save();
 
-    const todayStr = new Date().toISOString().slice(0, 10);
+    const todayStr = toDateKey();
 
     await DailyPacked.findOneAndUpdate(
       { user: req.user._id, date: todayStr },
@@ -499,7 +500,7 @@ export const removeBoxItem = async (req, res) => {
       await item.save();
     }
 
-    const todayStr = new Date().toISOString().slice(0, 10);
+    const todayStr = toDateKey();
 
     await DailyPacked.findOneAndUpdate(
       { user: req.user._id, date: todayStr },

@@ -1,12 +1,23 @@
 // Enhanced Product class with fragility and stacking rules
 class Product {
   constructor(length, breadth, height, weight, quantity, options = {}) {
+    const normalizedLength = Number(length);
+    const normalizedBreadth = Number(breadth);
+    const normalizedHeight = Number(height);
+    const normalizedWeight = Number(weight);
+    const normalizedQuantity = Number(quantity);
+
     if (
-      length <= 0 ||
-      breadth <= 0 ||
-      height <= 0 ||
-      weight <= 0 ||
-      quantity <= 0
+      !Number.isFinite(normalizedLength) ||
+      !Number.isFinite(normalizedBreadth) ||
+      !Number.isFinite(normalizedHeight) ||
+      !Number.isFinite(normalizedWeight) ||
+      !Number.isFinite(normalizedQuantity) ||
+      normalizedLength <= 0 ||
+      normalizedBreadth <= 0 ||
+      normalizedHeight <= 0 ||
+      normalizedWeight <= 0 ||
+      normalizedQuantity <= 0
     ) {
       throw new Error(
         "All product dimensions, weight, and quantity must be positive numbers",
@@ -14,12 +25,12 @@ class Product {
     }
     this.id = options.id || `product_${Date.now()}`;
     this.name = options.name || "Unknown Product";
-    this.length = length;
-    this.breadth = breadth;
-    this.height = height;
-    this.weight = weight;
-    this.quantity = quantity;
-    this.volume = length * breadth * height;
+    this.length = normalizedLength;
+    this.breadth = normalizedBreadth;
+    this.height = normalizedHeight;
+    this.weight = normalizedWeight;
+    this.quantity = Math.floor(normalizedQuantity);
+    this.volume = normalizedLength * normalizedBreadth * normalizedHeight;
     this.density = weight / this.volume;
 
     // Structural integrity properties (required for safe stacking constraints)
@@ -45,6 +56,8 @@ class Product {
       options.maxStackHeight || this.maxVerticalStack || Math.floor(height * 10); // Backward-compatible alias
     this.maxStackWeight = options.maxStackWeight || weight * 50; // Default: 50x product weight
     this.canRotate = options.canRotate !== false; // Default: true
+    this.mustStayUpright = options.mustStayUpright === true || options.upright === true;
+    this.noStackAbove = options.noStackAbove === true || this.leakageRisk === "High";
     this.priority = options.priority || 1; // Higher = more important to pack
 
     // Cost factors
@@ -56,18 +69,32 @@ class Product {
 // Enhanced Carton class with cost and priority factors
 class Carton {
   constructor(length, breadth, height, maxWeight, options = {}) {
-    if (length <= 0 || breadth <= 0 || height <= 0 || maxWeight <= 0) {
+    const normalizedLength = Number(length);
+    const normalizedBreadth = Number(breadth);
+    const normalizedHeight = Number(height);
+    const normalizedMaxWeight = Number(maxWeight);
+
+    if (
+      !Number.isFinite(normalizedLength) ||
+      !Number.isFinite(normalizedBreadth) ||
+      !Number.isFinite(normalizedHeight) ||
+      !Number.isFinite(normalizedMaxWeight) ||
+      normalizedLength <= 0 ||
+      normalizedBreadth <= 0 ||
+      normalizedHeight <= 0 ||
+      normalizedMaxWeight <= 0
+    ) {
       throw new Error(
         "All carton dimensions and max weight must be positive numbers",
       );
     }
     this.id = options.id || `carton_${Date.now()}`;
     this.name = options.name || "Standard Carton";
-    this.length = length;
-    this.breadth = breadth;
-    this.height = height;
-    this.maxWeight = maxWeight;
-    this.volume = length * breadth * height;
+    this.length = normalizedLength;
+    this.breadth = normalizedBreadth;
+    this.height = normalizedHeight;
+    this.maxWeight = normalizedMaxWeight;
+    this.volume = normalizedLength * normalizedBreadth * normalizedHeight;
     this.availableQuantity = options.availableQuantity || 1;
 
     // Cost factors
@@ -100,7 +127,7 @@ class PackedItem {
     this.orientation = orientation;
     this.stackLevel = stackLevel;
     this.dimensions = this.getOrientedDimensions(product, orientation);
-    this.weight = product.weight;
+    this.weight = product.weightPerUnitKg;
     this.volume = product.volume;
   }
 
@@ -120,6 +147,16 @@ class PackedItem {
 
 function isAxisAlignedOverlap(aMin, aMax, bMin, bMax) {
   return aMin < bMax && aMax > bMin;
+}
+
+function clamp(value, min, max) {
+  return Math.min(max, Math.max(min, value));
+}
+
+function toFixedNumber(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return 0;
+  return Number(numeric.toFixed(2));
 }
 
 function packedItemsOverlap(firstItem, secondItem) {
@@ -188,6 +225,7 @@ class Advanced3DBinPacker {
     const algorithms = ["ffd", "bfd", "guillotine"];
     let bestResult = null;
     let bestScore = -Infinity;
+    let failureCount = 0;
 
     for (const algo of algorithms) {
       try {
@@ -198,9 +236,13 @@ class Advanced3DBinPacker {
           bestScore = score;
           bestResult = result;
         }
-      } catch (error) {
-        console.warn(`Algorithm ${algo} failed:`, error.message);
+      } catch {
+        failureCount += 1;
       }
+    }
+
+    if (failureCount === algorithms.length) {
+      return this.basicPacking(products, cartons);
     }
 
     return bestResult || this.basicPacking(products, cartons);
@@ -423,7 +465,9 @@ class Advanced3DBinPacker {
     const totalItemsByVolume = itemsPerLayer * maxStackLayers;
 
     // Weight constraint
-    const maxItemsByWeight = Math.floor(carton.maxWeight / product.weight);
+    const maxItemsByWeight = Math.floor(
+      carton.maxWeight / Math.max(product.weightPerUnitKg, 1e-9),
+    );
 
     // Final quantity considering all constraints
     const idealItemsPacked = Math.min(
@@ -608,7 +652,7 @@ class Advanced3DBinPacker {
             stack.baseCrushResistanceKg = product.crushResistanceKg;
           }
           stack.topLeakageRisk = product.leakageRisk;
-          if (product.leakageRisk === "High") {
+          if (product.noStackAbove) {
             stack.lockedAbove = true;
           }
         }
@@ -682,7 +726,15 @@ class Advanced3DBinPacker {
       },
     ];
 
-    return product.canRotate ? orientations : [orientations[0]];
+    if (!product.canRotate) {
+      return [orientations[0]];
+    }
+
+    if (product.mustStayUpright) {
+      return orientations.filter((orientation) => orientation.dims[2] === product.height);
+    }
+
+    return orientations;
   }
 
   // Sort cartons by priority considering multiple factors
@@ -751,7 +803,7 @@ class Advanced3DBinPacker {
       (sum, item) => sum + item.volume,
       0,
     );
-    return totalItemVolume / carton.volume;
+    return carton.volume > 0 ? totalItemVolume / carton.volume : 0;
   }
 
   calculateCenterOfMass(packedItems, carton) {
@@ -770,6 +822,10 @@ class Advanced3DBinPacker {
       weightedX += centerX * item.weight;
       weightedY += centerY * item.weight;
       weightedZ += centerZ * item.weight;
+    }
+
+    if (totalWeight <= 0) {
+      return new Position3D(carton.length / 2, carton.breadth / 2, carton.height / 2);
     }
 
     return new Position3D(
@@ -898,15 +954,42 @@ class Advanced3DBinPacker {
 // Helper functions for the service
 function calculateOverallPackingScore(results) {
   if (!results || results.length === 0) return 0;
-  const scores = results.map(
-    (r) =>
-      (r.efficiency.volumeEfficiency / 100) * 0.5 +
-      r.efficiency.spaceUtilization * 0.3 +
-      (1 - r.packingMetrics.wasteSpace / r.cartonDetails.volume) * 0.2,
-  );
-  return (
-    Math.round((scores.reduce((a, b) => a + b, 0) / scores.length) * 100) / 100
-  );
+
+  const normalizedScore =
+    results.reduce((sum, result) => {
+      const volumeEfficiency = clamp(
+        Number(result?.efficiency?.volumeEfficiency || 0) / 100,
+        0,
+        1,
+      );
+      const spaceUtilization = clamp(
+        Number(result?.efficiency?.spaceUtilization || 0) / 100,
+        0,
+        1,
+      );
+      const weightUtilization = clamp(
+        Number(result?.efficiency?.weightUtilization || 0) / 100,
+        0,
+        1,
+      );
+      const wasteRatio = clamp(
+        Number(result?.packingMetrics?.wasteSpace || 0) /
+          Math.max(Number(result?.cartonDetails?.volume || 0), 1),
+        0,
+        1,
+      );
+      const wasteControl = 1 - wasteRatio;
+
+      return (
+        sum +
+        volumeEfficiency * 0.45 +
+        spaceUtilization * 0.3 +
+        weightUtilization * 0.15 +
+        wasteControl * 0.1
+      );
+    }, 0) / results.length;
+
+  return toFixedNumber(clamp(normalizedScore * 100, 0, 100));
 }
 
 function calculateWasteAnalysis(results) {
@@ -935,17 +1018,75 @@ function calculateStackingAnalysis(results) {
   return {
     averageLayers:
       results.length > 0
-        ? Math.round((totalLayers / results.length) * 10) / 10
+        ? toFixedNumber(totalLayers / results.length)
         : 0,
     stackingRate:
       results.length > 0
-        ? Math.round((efficientStacks / results.length) * 100)
+        ? toFixedNumber((efficientStacks / results.length) * 100)
         : 0,
   };
 }
 
-function generatePackingRecommendations(results, unpackedProducts, cartons) {
+function canFitProductInCarton(product, carton) {
+  const dimensions = [product.length, product.breadth, product.height].sort(
+    (a, b) => a - b,
+  );
+  const cartonDimensions = [carton.length, carton.breadth, carton.height].sort(
+    (a, b) => a - b,
+  );
+
+  return (
+    dimensions[0] <= cartonDimensions[0] &&
+    dimensions[1] <= cartonDimensions[1] &&
+    dimensions[2] <= cartonDimensions[2] &&
+    product.weight <= carton.maxWeight
+  );
+}
+
+function getSmallerBoxRecommendation(
+  products,
+  cartons,
+  allResults,
+  overallVolumeEfficiency,
+) {
+  if (!products?.length || !allResults?.length || overallVolumeEfficiency >= 50) {
+    return null;
+  }
+
+  const usedVolumeAverage =
+    allResults.reduce((sum, result) => sum + result.cartonDetails.volume, 0) /
+    allResults.length;
+  const firstProduct = products[0];
+
+  const candidate = cartons
+    .filter((carton) => carton.availableQuantity > 0)
+    .filter((carton) => carton.volume < usedVolumeAverage)
+    .filter((carton) => canFitProductInCarton(firstProduct, carton))
+    .sort((a, b) => b.volume - a.volume)[0];
+
+  if (!candidate) return null;
+
+  return `Low volume efficiency (${toFixedNumber(overallVolumeEfficiency)}%). Consider smaller box '${candidate.name}' (${toFixedNumber(candidate.length)} x ${toFixedNumber(candidate.breadth)} x ${toFixedNumber(candidate.height)} cm).`;
+}
+
+function generatePackingRecommendations(
+  results,
+  unpackedProducts,
+  cartons,
+  products,
+  overallVolumeEfficiency,
+) {
   const recommendations = [];
+
+  const smallerBoxTip = getSmallerBoxRecommendation(
+    products,
+    cartons,
+    results,
+    overallVolumeEfficiency,
+  );
+  if (smallerBoxTip) {
+    recommendations.push(smallerBoxTip);
+  }
 
   if (unpackedProducts.length > 0) {
     recommendations.push(
@@ -994,6 +1135,49 @@ function estimateCarbonFootprint(results) {
   return Math.round((totalWeight * 0.5 + cartonFootprint) * 100) / 100;
 }
 
+function safeSum(items, selector) {
+  if (!Array.isArray(items) || items.length === 0) return 0;
+  return items.reduce((sum, item) => sum + Number(selector(item) || 0), 0);
+}
+
+function getCartonVolume(carton) {
+  if (!carton) return 0;
+  return Number(
+    carton?.volume ||
+      (Number(carton.length) * Number(carton.breadth) * Number(carton.height)) ||
+      0,
+  );
+}
+
+function getSortedDimensions(entity) {
+  return [Number(entity?.length) || 0, Number(entity?.breadth) || 0, Number(entity?.height) || 0].sort(
+    (a, b) => a - b,
+  );
+}
+
+function canFitInAnyOrientation(product, carton) {
+  if (!product || !carton) return false;
+
+  const productDimensions = getSortedDimensions(product);
+  const cartonDimensions = getSortedDimensions(carton);
+
+  return (
+    productDimensions[0] <= cartonDimensions[0] &&
+    productDimensions[1] <= cartonDimensions[1] &&
+    productDimensions[2] <= cartonDimensions[2]
+  );
+}
+
+function getLargestAvailableCarton(cartons) {
+  if (!Array.isArray(cartons) || cartons.length === 0) return null;
+
+  return cartons.reduce((largest, current) => {
+    const largestVolume = getCartonVolume(largest);
+    const currentVolume = getCartonVolume(current);
+    return currentVolume > largestVolume ? current : largest;
+  }, cartons[0]);
+}
+
 // Main service function
 function calculateOptimalPacking(products, cartons, options = {}) {
   const {
@@ -1006,13 +1190,49 @@ function calculateOptimalPacking(products, cartons, options = {}) {
   // Initialize the advanced packer
   const packer = new Advanced3DBinPacker();
 
+  const availableBoxes = Array.isArray(cartons) ? cartons.filter(Boolean) : [];
+  if (!availableBoxes.length) {
+    throw new Error("No boxes found in inventory.");
+  }
+
   // Ensure products is an array
   const productArray = (Array.isArray(products) ? products : [products]).sort(
     (a, b) => (b.weightPerUnitKg || 0) - (a.weightPerUnitKg || 0),
   );
 
+  if (productArray.length === 0) {
+    throw new Error("No products provided.");
+  }
+
+  for (const product of productArray) {
+    const quantity = Number(product?.quantity || 0);
+    const length = Number(product?.length || 0);
+    const breadth = Number(product?.breadth || 0);
+    const height = Number(product?.height || 0);
+
+    if (quantity <= 0 || length <= 0 || breadth <= 0 || height <= 0) {
+      throw new Error(
+        `Invalid dimensions or quantity for product: ${product?.name || "Unknown"}`,
+      );
+    }
+  }
+
+  const largestAvailableCarton = getLargestAvailableCarton(availableBoxes);
+  if (!largestAvailableCarton) {
+    throw new Error("No boxes found in inventory.");
+  }
+
+  const incompatibleProduct = productArray.find(
+    (product) => !canFitInAnyOrientation(product, largestAvailableCarton),
+  );
+  if (incompatibleProduct) {
+    throw new Error(
+      "Item is too large for any available carton in your inventory.",
+    );
+  }
+
   // Create working copy of cartons with quantities
-  const workingCartons = cartons.map((carton, index) => ({
+  const workingCartons = availableBoxes.map((carton, index) => ({
     ...carton,
     originalIndex: index,
     availableQuantity: carton.availableQuantity || 1,
@@ -1056,12 +1276,11 @@ function calculateOptimalPacking(products, cartons, options = {}) {
 
           // Enhanced metrics
           efficiency: {
-            volumeEfficiency:
-              Math.round(result.efficiency.volumeEfficiency * 10) / 10,
-            spaceUtilization:
-              Math.round(result.efficiency.spaceUtilization * 1000) / 10,
-            weightUtilization:
-              Math.round(result.efficiency.weightUtilization * 10) / 10,
+            volumeEfficiency: toFixedNumber(result.efficiency.volumeEfficiency),
+            spaceUtilization: toFixedNumber(
+              result.efficiency.spaceUtilization * 100,
+            ),
+            weightUtilization: toFixedNumber(result.efficiency.weightUtilization),
           },
 
           // Layout and stacking information
@@ -1076,20 +1295,16 @@ function calculateOptimalPacking(products, cartons, options = {}) {
 
           // Cost analysis
           cost: {
-            total: Math.round(result.cost * 100) / 100,
+            total: toFixedNumber(result.cost),
             breakdown: {
-              cartonCost: result.carton.cost,
-              shippingCost: result.carton.shippingCost,
-              inefficiencyPenalty:
-                Math.round(
-                  (1 - result.efficiency.spaceUtilization) *
-                    result.carton.cost *
-                    0.5 *
-                    100,
-                ) / 100,
+              cartonCost: toFixedNumber(result.carton.cost),
+              shippingCost: toFixedNumber(result.carton.shippingCost),
+              inefficiencyPenalty: toFixedNumber(
+                (1 - result.efficiency.spaceUtilization) * result.carton.cost * 0.5,
+              ),
               fragilityPenalty:
                 product.isFragile && result.layout.layers > 2
-                  ? Math.round(product.damageCost * 0.1 * 100) / 100
+                  ? toFixedNumber(product.damageCost * 0.1)
                   : 0,
             },
           },
@@ -1115,20 +1330,15 @@ function calculateOptimalPacking(products, cartons, options = {}) {
 
           // Packing efficiency metrics
           packingMetrics: {
-            cartonUtilization:
-              Math.round(result.efficiency.spaceUtilization * 1000) / 10,
-            wasteSpace:
-              Math.round(
-                (result.carton.volume -
-                  result.layout.itemsPacked * product.volume) *
-                  100,
-              ) / 100,
-            weightUtilized:
-              Math.round(
-                ((result.itemsPacked * product.weight) /
-                  result.carton.maxWeight) *
-                  1000,
-              ) / 10,
+            cartonUtilization: toFixedNumber(
+              result.efficiency.spaceUtilization * 100,
+            ),
+            wasteSpace: toFixedNumber(
+              result.carton.volume - result.layout.itemsPacked * product.volume,
+            ),
+            weightUtilized: toFixedNumber(
+              ((result.itemsPacked * product.weight) / result.carton.maxWeight) * 100,
+            ),
             spaceOptimality:
               result.layout.itemsPerLayer > 1 ? "Good" : "Could be improved",
             constraintMessages: result.layout.constraintMessages || [],
@@ -1164,37 +1374,38 @@ function calculateOptimalPacking(products, cartons, options = {}) {
 
   // Group reduction optimization
   if (groupReduction && allResults.length > 1) {
-    // Attempt to consolidate items across fewer cartons
-    // This would involve more complex re-optimization logic
-    // console.log('Group reduction optimization would be applied here');
+    // Attempt to consolidate items across fewer cartons.
   }
 
   // Calculate comprehensive summary
-  const totalItemsPacked = allResults.reduce(
-    (sum, result) => sum + result.itemsPacked,
-    0,
-  );
-  const totalRequestedItems = productArray.reduce(
-    (sum, product) => sum + product.quantity,
-    0,
-  );
+  const totalItemsPacked = safeSum(allResults, (result) => result.itemsPacked);
+  const totalRequestedItems = safeSum(productArray, (product) => product.quantity);
   const totalCartonsUsed = allResults.length;
-  const totalCost = allResults.reduce(
-    (sum, result) => sum + result.cost.total,
-    0,
+  const totalCost = safeSum(allResults, (result) => result.cost?.total);
+  const totalPackedItemVolume = safeSum(
+    allResults,
+    (result) => (result.itemsPacked || 0) * (result.product?.volume || 0),
   );
-  const avgVolumeEfficiency =
-    allResults.length > 0
-      ? allResults.reduce(
-          (sum, result) => sum + result.efficiency.volumeEfficiency,
-          0,
-        ) / allResults.length
-      : 0;
+  const totalUsedCartonVolume = safeSum(
+    allResults,
+    (result) => result.cartonDetails?.volume || 0,
+  );
+  const overallVolumeEfficiency = clamp(
+    totalUsedCartonVolume > 0
+      ? (totalPackedItemVolume / totalUsedCartonVolume) * 100
+      : 0,
+    0,
+    100,
+  );
+  const totalWeightGrams = safeSum(
+    allResults,
+    (result) => (result.itemsPacked || 0) * (result.product?.weight || 0),
+  );
 
   // Carton type analysis
   const cartonTypeAnalysis = {};
   allResults.forEach((result) => {
-    const key = `${result.cartonDetails.length}×${result.cartonDetails.breadth}×${result.cartonDetails.height}`;
+    const key = `${result.cartonDetails?.length || 0}×${result.cartonDetails?.breadth || 0}×${result.cartonDetails?.height || 0}`;
     if (!cartonTypeAnalysis[key]) {
       cartonTypeAnalysis[key] = {
         cartonType: key,
@@ -1206,18 +1417,42 @@ function calculateOptimalPacking(products, cartons, options = {}) {
       };
     }
     cartonTypeAnalysis[key].count++;
-    cartonTypeAnalysis[key].totalItems += result.itemsPacked;
-    cartonTypeAnalysis[key].totalCost += result.cost.total;
-    cartonTypeAnalysis[key].avgEfficiency += result.efficiency.volumeEfficiency;
+    cartonTypeAnalysis[key].totalItems += result.itemsPacked || 0;
+    cartonTypeAnalysis[key].totalCost += result.cost?.total || 0;
+    cartonTypeAnalysis[key].avgEfficiency += result.efficiency?.volumeEfficiency || 0;
   });
 
   // Calculate averages for carton type analysis
   Object.values(cartonTypeAnalysis).forEach((analysis) => {
-    analysis.avgEfficiency =
-      Math.round((analysis.avgEfficiency / analysis.count) * 10) / 10;
-    analysis.avgCostPerCarton =
-      Math.round((analysis.totalCost / analysis.count) * 100) / 100;
+    analysis.avgEfficiency = toFixedNumber(analysis.avgEfficiency / analysis.count);
+    analysis.avgCostPerCarton = toFixedNumber(analysis.totalCost / analysis.count);
+    analysis.totalCost = toFixedNumber(analysis.totalCost);
   });
+
+  const groupedCartonCost = safeSum(
+    Object.values(cartonTypeAnalysis),
+    (cartonData) => cartonData.totalCost,
+  );
+  const shippingRatePerKg = 18;
+  const fragileHandlingFee = productArray.some((product) => product.isFragile)
+    ? 35
+    : 0;
+  const totalWeightKg = totalWeightGrams / 1000;
+  const shippingCostByWeight = totalWeightKg * shippingRatePerKg;
+  const estimatedCost =
+    groupedCartonCost + shippingCostByWeight + fragileHandlingFee;
+
+  if (totalItemsPacked === 0) {
+    const anyProductFits = productArray.some((product) =>
+      availableBoxes.some((carton) => canFitInAnyOrientation(product, carton)),
+    );
+
+    if (!anyProductFits) {
+      throw new Error("No suitable box found.");
+    }
+
+    throw new Error("Stacking constraints prevent packing.");
+  }
 
   // Advanced analytics
   const analytics = {
@@ -1227,22 +1462,24 @@ function calculateOptimalPacking(products, cartons, options = {}) {
       stackingAnalysis: calculateStackingAnalysis(allResults),
       costEfficiency:
         totalItemsPacked > 0
-          ? Math.round((totalCost / totalItemsPacked) * 100) / 100
+          ? toFixedNumber(totalCost / totalItemsPacked)
           : 0,
     },
     recommendations: generatePackingRecommendations(
       allResults,
       unpackedProducts,
       cartons,
+      productArray,
+      overallVolumeEfficiency,
     ),
     sustainability: {
-      totalWasteVolume: allResults.reduce(
-        (sum, result) => sum + result.packingMetrics.wasteSpace,
-        0,
+      totalWasteVolume: toFixedNumber(
+        allResults.reduce((sum, result) => sum + result.packingMetrics.wasteSpace, 0),
       ),
-      packingDensity:
+      packingDensity: toFixedNumber(
         totalItemsPacked > 0 ? allResults.length / totalItemsPacked : 0,
-      carbonFootprint: estimateCarbonFootprint(allResults),
+      ),
+      carbonFootprint: toFixedNumber(estimateCarbonFootprint(allResults)),
     },
   };
 
@@ -1255,10 +1492,19 @@ function calculateOptimalPacking(products, cartons, options = {}) {
       totalItemsPacked: totalItemsPacked,
       totalCartonsUsed: totalCartonsUsed,
       packingSuccess: unpackedProducts.length === 0,
-      packingRate:
-        Math.round((totalItemsPacked / totalRequestedItems) * 1000) / 10,
-      overallVolumeEfficiency: Math.min(100, Math.round(avgVolumeEfficiency * 10) / 10),
-      totalCost: Math.round(totalCost * 100) / 100,
+      packingRate: toFixedNumber((totalItemsPacked / totalRequestedItems) * 100),
+      overallVolumeEfficiency: toFixedNumber(overallVolumeEfficiency),
+      totalCost: toFixedNumber(totalCost),
+      totalWeightKg: toFixedNumber(totalWeightKg),
+      estimatedCost: {
+        total: toFixedNumber(estimatedCost),
+        breakdown: {
+          cartonBaseCost: toFixedNumber(groupedCartonCost),
+          shippingRatePerKg: toFixedNumber(shippingRatePerKg),
+          shippingCostByWeight: toFixedNumber(shippingCostByWeight),
+          fragileHandlingFee: toFixedNumber(fragileHandlingFee),
+        },
+      },
       cartonTypeBreakdown: Object.values(cartonTypeAnalysis),
       algorithmUsed: algorithm,
       optimizationApplied: {

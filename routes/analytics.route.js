@@ -4,6 +4,7 @@ import ItemData from "../models/item.model.js";
 import Prediction from "../models/prediction.model.js";
 import Shipment from "../models/shipment.model.js";
 import { authenticateToken } from "../middleware/auth.middleware.js";
+import { getLastNDates, toDateKey } from "../utils/date.utils.js";
 
 const router = express.Router();
 
@@ -17,7 +18,7 @@ router.get("/overview", authenticateToken, async (req, res) => {
 
     // 1. Total Items Packed (Lifetime)
     const totalPackedResult = await Shipment.aggregate([
-      { $match: { userId } },
+      { $match: { userId, isArchived: { $ne: true } } },
       { $group: { _id: null, total: { $sum: "$packedQty" } } },
     ]);
     const totalPacked = totalPackedResult[0]?.total || 0;
@@ -60,6 +61,7 @@ router.get("/packing-history", authenticateToken, async (req, res) => {
 
     const history = await Shipment.find({
       userId,
+      isArchived: { $ne: true },
       packedAt: { $gte: sevenDaysAgo },
     }).lean();
 
@@ -70,20 +72,14 @@ router.get("/packing-history", authenticateToken, async (req, res) => {
     });
 
     // Fill in missing days with 0
-    const result = [];
-    for (let i = 0; i < 7; i++) {
-      const d = new Date();
-      d.setDate(d.getDate() - i);
-      const dStr = d.toISOString().slice(0, 10);
-
-      result.push({
+    const reversedResult = getLastNDates(7).map((date) => {
+      const dStr = toDateKey(date);
+      return {
         date: dStr,
         count: historyMap[dStr] || 0,
-        day: d.toLocaleDateString("en-US", { weekday: "short" }),
-      });
-    }
-
-    const reversedResult = result.toReversed();
+        day: date.toLocaleDateString("en-US", { weekday: "short" }),
+      };
+    });
 
     res.status(200).json({
       success: true,
@@ -92,6 +88,76 @@ router.get("/packing-history", authenticateToken, async (req, res) => {
   } catch (error) {
     console.error("Error fetching packing history:", error);
     res.status(500).json({ success: false, message: "Server Error" });
+  }
+});
+
+/**
+ * GET /analytics/transactions
+ * Returns shipment transactions sorted newest-first for Order History screen
+ */
+router.get("/transactions", authenticateToken, async (req, res) => {
+  try {
+    const userId = req.user._id;
+    const limit = Number.parseInt(req.query.limit, 10) || 100;
+
+    const shipments = await Shipment.find({
+      userId,
+      isArchived: { $ne: true },
+    })
+      .sort({ createdAt: -1 })
+      .limit(limit)
+      .lean();
+
+    return res.status(200).json({
+      success: true,
+      data: shipments,
+    });
+  } catch (error) {
+    console.error("Error fetching shipment transactions:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Server Error",
+    });
+  }
+});
+
+/**
+ * DELETE /analytics/transactions/:id
+ * Deletes a shipment history log without touching inventory stock.
+ */
+router.delete("/transactions/:id", authenticateToken, async (req, res) => {
+  try {
+    const userId = req.user._id;
+    const { id } = req.params;
+
+    const archivedShipment = await Shipment.findOneAndUpdate({
+      _id: id,
+      userId,
+      isArchived: { $ne: true },
+    }, {
+      $set: {
+        isArchived: true,
+        archivedAt: new Date(),
+      },
+    });
+
+    if (!archivedShipment) {
+      return res.status(404).json({
+        success: false,
+        message: "History record not found",
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: "History record removed from view",
+    });
+  } catch (error) {
+    console.error("Error deleting shipment transaction:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Server Error",
+    });
   }
 });
 

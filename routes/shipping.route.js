@@ -6,13 +6,11 @@ import {
   calculateDimensions,
   convertToKg,
   calculateOptimalPacking,
-  validateProduct,
   validateCartons,
   INVENTORY,
 } from "../utils/shippingUtils.js";
 
 import {
-  authenticateToken,
   optionalAuth,
 } from "../middleware/auth.middleware.js";
 import { sanitizeInput } from "../middleware/validation.middleware.js";
@@ -99,7 +97,6 @@ router.post(
         weightUnit,
         quantity,
         customCartons,
-        preferences = {},
       } = req.body;
 
       // Calculate product dimensions based on shape
@@ -160,13 +157,6 @@ router.post(
         },
         timestamp: new Date().toISOString(),
       };
-
-      // Log for analytics if user is authenticated
-      if (req.user) {
-        console.log(
-          `Shipping calculation by user ${req.user._id}: ${quantity} ${shape}s`,
-        );
-      }
 
       return res.status(packingResult.success ? 200 : 206).json(response);
     } catch (error) {
