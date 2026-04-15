@@ -123,7 +123,7 @@ Create a `config/config.env` file with the following variables:
     NODE_ENV=development
 
     # Database
-    MONGO_URI=mongodb+srv://username:password@cluster.mongodb.net/shipwise
+    MONGODB_URI=mongodb+srv://username:password@cluster.mongodb.net/shipwise
 
     # Client URL
     CLIENT_URL=http://localhost:3000
@@ -237,7 +237,7 @@ The application is configured for Vercel deployment with:
 ```bash
 # Set production environment variables in your deployment platform
 NODE_ENV=production
-MONGO_URI=your-production-mongodb-url
+MONGODB_URI=your-production-mongodb-url
 CLIENT_URL=your-frontend-url
 ```
 
@@ -247,7 +247,7 @@ CLIENT_URL=your-frontend-url
 |----------|-------------|----------|
 | `PORT` | Server port (default: 3001) | No |
 | `NODE_ENV` | Environment (development/production) | Yes |
-| `MONGO_URI` | MongoDB connection string | Yes |
+| `MONGODB_URI` | MongoDB connection string | Yes |
 | `CLIENT_URL` | Frontend application URL | Yes |
 | `JWT_SECRET` | JWT signing secret | Yes |
 | `JWT_ACCOUNT_ACTIVATION` | Account activation token secret | Yes |

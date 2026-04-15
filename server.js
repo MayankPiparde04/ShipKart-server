@@ -16,7 +16,7 @@ const PORT = process.env.PORT || 8080;
 let server;
 
 const resolveMongoUri = () =>
-  (process.env.MONGODB_URI || process.env.MONGO_URI || "").trim();
+  (process.env.MONGODB_URI || "").trim();
 
 const validateMongoUri = (uri) => {
   if (!uri) {

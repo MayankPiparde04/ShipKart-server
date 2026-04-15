@@ -83,11 +83,11 @@ const classifyMongoError = (error) => {
 const connectDB = async (explicitUri) => {
   try {
     const mongoUri = normalizeMongoUri(
-      explicitUri || process.env.MONGO_URI || process.env.MONGODB_URI || "",
+      explicitUri || process.env.MONGODB_URI || "",
     );
 
     if (!mongoUri) {
-      console.error("[DB] FATAL: MONGO_URI is not set in environment variables.");
+      console.error("[DB] FATAL: MONGODB_URI is not set in environment variables.");
       process.exit(1);
     }
 
