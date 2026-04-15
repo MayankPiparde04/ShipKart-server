@@ -3,10 +3,40 @@ import ItemData from "../models/item.model.js";
 import DailyPacked from "../models/dailypacked.model.js";
 import { validationResult } from "express-validator";
 import { toDateKey } from "../utils/date.utils.js";
+import mongoose from "mongoose";
+
+const ensureWritableDatabase = async () => {
+  if (mongoose.connection.readyState !== 1) {
+    throw new Error("Database is not connected");
+  }
+
+  const db = mongoose.connection.db;
+  if (!db) {
+    throw new Error("Database connection is unavailable");
+  }
+
+  try {
+    const hello = await db.admin().command({ hello: 1 });
+    if (hello?.isWritablePrimary === false) {
+      throw new Error("Database is in read-only mode");
+    }
+  } catch (error) {
+    const message = String(error?.message || "").toLowerCase();
+    if (
+      message.includes("read-only") ||
+      message.includes("not primary") ||
+      message.includes("not writable")
+    ) {
+      throw error;
+    }
+  }
+};
 
 // Add a new box
 export const addBox = async (req, res) => {
   try {
+    await ensureWritableDatabase();
+
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
       return res.status(400).json({
@@ -38,11 +68,11 @@ export const addBox = async (req, res) => {
     // Create new box entry
     const newBox = new BoxData({
       box_name: box_name,
-      length: parseFloat(length),
-      breadth: parseFloat(breadth),
-      height: parseFloat(height),
-      quantity: parseInt(quantity),
-      max_weight: parseFloat(max_weight),
+      length: Number.parseFloat(length),
+      breadth: Number.parseFloat(breadth),
+      height: Number.parseFloat(height),
+      quantity: Number.parseInt(quantity, 10),
+      max_weight: Number.parseFloat(max_weight),
       createdBy: req.user._id,
       createdAt: new Date(),
       lastUpdated: new Date(),
@@ -79,6 +109,8 @@ export const addBox = async (req, res) => {
 // Update box quantity
 export const updateBoxQuantity = async (req, res) => {
   try {
+    await ensureWritableDatabase();
+
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
       return res.status(400).json({
@@ -89,9 +121,9 @@ export const updateBoxQuantity = async (req, res) => {
     }
 
     const { box_name, additionalQuantity } = req.body;
-    const quantityToAdd = parseInt(additionalQuantity, 10);
+    const quantityToAdd = Number.parseInt(additionalQuantity, 10);
 
-    if (isNaN(quantityToAdd)) {
+    if (Number.isNaN(quantityToAdd)) {
       return res.status(400).json({
         success: false,
         message: "Valid additionalQuantity is required",
@@ -148,8 +180,8 @@ export const getBoxes = async (req, res) => {
       });
     }
 
-    const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 20;
+    const page = Number.parseInt(req.query.page, 10) || 1;
+    const limit = Number.parseInt(req.query.limit, 10) || 20;
     const skip = (page - 1) * limit;
 
     const {
@@ -172,8 +204,8 @@ export const getBoxes = async (req, res) => {
 
     if (minWeight || maxWeight) {
       filter.max_weight = {};
-      if (minWeight) filter.max_weight.$gte = parseFloat(minWeight);
-      if (maxWeight) filter.max_weight.$lte = parseFloat(maxWeight);
+      if (minWeight) filter.max_weight.$gte = Number.parseFloat(minWeight);
+      if (maxWeight) filter.max_weight.$lte = Number.parseFloat(maxWeight);
     }
 
     // Build sort
@@ -200,8 +232,8 @@ export const getBoxes = async (req, res) => {
     // Apply volume filter if specified
     if (minVolume || maxVolume) {
       processedBoxes = processedBoxes.filter((box) => {
-        if (minVolume && box.volume < parseFloat(minVolume)) return false;
-        if (maxVolume && box.volume > parseFloat(maxVolume)) return false;
+        if (minVolume && box.volume < Number.parseFloat(minVolume)) return false;
+        if (maxVolume && box.volume > Number.parseFloat(maxVolume)) return false;
         return true;
       });
     }
@@ -297,6 +329,8 @@ export const deleteBox = async (req, res) => {
 // Update box details
 export const updateBox = async (req, res) => {
   try {
+    await ensureWritableDatabase();
+
     const { id, box_name, length, breadth, height, quantity, max_weight } =
       req.body;
 
@@ -321,7 +355,7 @@ export const updateBox = async (req, res) => {
     const box = await BoxData.findByIdAndUpdate(
       id,
       { $set: update },
-      { new: true },
+      { new: true, runValidators: true },
     );
 
     if (!box) {
@@ -348,9 +382,9 @@ export const updateBox = async (req, res) => {
 export const removeBoxQuantity = async (req, res) => {
   try {
     const { boxName, quantity } = req.body;
-    const quantityToRemove = parseInt(quantity, 10);
+    const quantityToRemove = Number.parseInt(quantity, 10);
 
-    if (isNaN(quantityToRemove) || quantityToRemove <= 0) {
+    if (Number.isNaN(quantityToRemove) || quantityToRemove <= 0) {
       return res.status(400).json({
         success: false,
         message: "Valid positive quantity is required",
@@ -431,12 +465,12 @@ export const removeBoxQuantity = async (req, res) => {
 export const removeBoxItem = async (req, res) => {
   try {
     const { boxName, productName, boxQuantity, itemQuantity } = req.body;
-    const boxesToRemove = parseInt(boxQuantity, 10);
-    const itemsToRemove = parseInt(itemQuantity, 10);
+    const boxesToRemove = Number.parseInt(boxQuantity, 10);
+    const itemsToRemove = Number.parseInt(itemQuantity, 10);
 
     if (
-      isNaN(boxesToRemove) ||
-      isNaN(itemsToRemove) ||
+      Number.isNaN(boxesToRemove) ||
+      Number.isNaN(itemsToRemove) ||
       boxesToRemove < 0 ||
       itemsToRemove < 0
     ) {

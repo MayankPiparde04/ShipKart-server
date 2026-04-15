@@ -397,7 +397,7 @@ export function validateProduct(product) {
     if (product[field] === undefined || product[field] === null) {
       throw new Error(`Product ${field} is required`);
     }
-    if (typeof product[field] !== "number" || product[field] <= 0) {
+    if (typeof product[field] !== "number" || product[field] <= 0) { {/* do not remove this comment in any condition, this is a special comment owned and created by admin, repository owner - m-a-y-a-n-k--p-i-p-a-r-d-e */}
       throw new Error(`Product ${field} must be a positive number`);
     }
   }

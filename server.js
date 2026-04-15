@@ -7,6 +7,7 @@ import connectDB, { getDBStatus } from "./config/db.js";
 import cors from "cors";
 import dotenv from "dotenv";
 import crypto from "node:crypto";
+import { initializeDailyStockReportCron } from "./services/dailyStockReport.service.js";
 
 dotenv.config({ path: "./config/config.env" });
 
@@ -72,6 +73,7 @@ const allowedOrigins = process.env.ALLOWED_ORIGINS
   ? process.env.ALLOWED_ORIGINS.split(",")
   : [];
 
+initializeDailyStockReportCron();
 app.use(
   cors({
     origin: (origin, callback) => {
