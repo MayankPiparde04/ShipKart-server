@@ -9,13 +9,13 @@ const OTP_VALIDITY_MS = 5 * 60 * 1000;
 const ACCESS_TOKEN_EXPIRES_IN = "7d";
 const REFRESH_TOKEN_EXPIRES_IN = "7d";
 
-const generateTokens = (userId) => {
-  const accessToken = jwt.sign({ _id: userId }, process.env.JWT_SECRET, {
+const generateTokens = (userId, tokenVersion = 0) => {
+  const accessToken = jwt.sign({ _id: userId, tokenVersion }, process.env.JWT_SECRET, {
     expiresIn: ACCESS_TOKEN_EXPIRES_IN,
   });
 
   const refreshToken = jwt.sign(
-    { _id: userId, type: "refresh" },
+    { _id: userId, type: "refresh", tokenVersion },
     process.env.JWT_REFRESH_SECRET,
     { expiresIn: REFRESH_TOKEN_EXPIRES_IN },
   );
@@ -24,6 +24,26 @@ const generateTokens = (userId) => {
 };
 
 const generateOtpCode = () => crypto.randomInt(100000, 1000000).toString();
+
+const applyAuthCookies = (res, accessToken, refreshToken) => {
+  const isProduction = process.env.NODE_ENV === "production";
+  const baseCookieOptions = {
+    httpOnly: true,
+    secure: isProduction,
+    sameSite: isProduction ? "none" : "lax",
+    path: "/",
+  };
+
+  res.cookie("shipwise_access", accessToken, {
+    ...baseCookieOptions,
+    maxAge: 7 * 24 * 60 * 60 * 1000,
+  });
+
+  res.cookie("shipwise_refresh", refreshToken, {
+    ...baseCookieOptions,
+    maxAge: 7 * 24 * 60 * 60 * 1000,
+  });
+};
 
 const buildOtpEmailTemplate = ({
   name,
@@ -171,7 +191,12 @@ export const activationController = async (req, res) => {
     await user.save();
 
 
-    const { accessToken, refreshToken } = generateTokens(user._id);
+    const { accessToken, refreshToken } = generateTokens(
+      user._id,
+      user.tokenVersion || 0,
+    );
+
+    applyAuthCookies(res, accessToken, refreshToken);
 
     res.status(200).json({
       success: true,
@@ -295,7 +320,12 @@ export const signinController = async (req, res) => {
     await user.save();
 
 
-    const { accessToken, refreshToken } = generateTokens(user._id);
+    const { accessToken, refreshToken } = generateTokens(
+      user._id,
+      user.tokenVersion || 0,
+    );
+
+    applyAuthCookies(res, accessToken, refreshToken);
 
     res.status(200).json({
       success: true,
@@ -376,8 +406,17 @@ export const refreshTokenController = async (req, res) => {
       });
     }
 
+    if ((decoded.tokenVersion || 0) !== (user.tokenVersion || 0)) {
+      return res.status(401).json({
+        success: false,
+        message: "Session is no longer valid. Please sign in again.",
+      });
+    }
 
-    const tokens = generateTokens(user._id);
+
+    const tokens = generateTokens(user._id, user.tokenVersion || 0);
+
+    applyAuthCookies(res, tokens.accessToken, tokens.refreshToken);
 
     res.status(200).json({
       success: true,
@@ -580,9 +619,102 @@ export const resetPasswordController = async (req, res) => {
   }
 };
 
+export const changePasswordController = async (req, res) => {
+  try {
+    const { currentPassword, newPassword, confirmNewPassword } = req.body;
+
+    if (!currentPassword || !newPassword || !confirmNewPassword) {
+      return res.status(400).json({
+        success: false,
+        message: "Current password, new password and confirmation are required",
+      });
+    }
+
+    if (newPassword !== confirmNewPassword) {
+      return res.status(400).json({
+        success: false,
+        message: "New password and confirmation do not match",
+      });
+    }
+
+    const strongPasswordPattern = /^(?=.*[^A-Za-z0-9]).{8,}$/;
+    if (!strongPasswordPattern.test(newPassword)) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Password must be at least 8 characters and contain at least one special character",
+      });
+    }
+
+    const user = await User.findById(req.user._id);
+    if (!user?.isActive) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    const isCurrentPasswordValid = await bcrypt.compare(
+      currentPassword,
+      user.hashed_password,
+    );
+
+    if (!isCurrentPasswordValid) {
+      return res.status(401).json({
+        success: false,
+        message: "Current password is incorrect",
+      });
+    }
+
+    if (currentPassword === newPassword) {
+      return res.status(400).json({
+        success: false,
+        message: "New password must be different from current password",
+      });
+    }
+
+    const salt = await bcrypt.genSalt(12);
+    const hashedPassword = await bcrypt.hash(newPassword, salt);
+
+    user.salt = String(salt);
+    user.hashed_password = hashedPassword;
+    user.tokenVersion = (user.tokenVersion || 0) + 1;
+    await user.save();
+
+    const tokens = generateTokens(user._id, user.tokenVersion);
+
+    applyAuthCookies(res, tokens.accessToken, tokens.refreshToken);
+
+    return res.status(200).json({
+      success: true,
+      message: "Password changed successfully",
+      data: {
+        ...tokens,
+        user: {
+          _id: user._id,
+          name: user.name,
+          email: user.email,
+          role: user.role,
+          phone: user.phone,
+          company: user.company,
+          address: user.address,
+        },
+      },
+    });
+  } catch (error) {
+    console.error("Change password error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error",
+    });
+  }
+};
+
 
 export const signoutController = async (req, res) => {
   try {
+    res.clearCookie("shipwise_access", { path: "/" });
+    res.clearCookie("shipwise_refresh", { path: "/" });
 
     res.status(200).json({
       success: true,

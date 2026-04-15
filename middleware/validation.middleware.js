@@ -155,6 +155,14 @@ export const validateSearch = [
 
 // Sanitize input middleware
 export const sanitizeInput = (req, res, next) => {
+  const sensitiveFields = new Set([
+    'password',
+    'currentPassword',
+    'newPassword',
+    'confirmNewPassword',
+    'confirmPassword',
+  ]);
+
   // Remove any null bytes
   for (const key in req.body) {
     if (typeof req.body[key] === 'string') {
@@ -164,7 +172,7 @@ export const sanitizeInput = (req, res, next) => {
   
   // Remove any script tags for XSS protection
   for (const key in req.body) {
-    if (typeof req.body[key] === 'string') {
+    if (typeof req.body[key] === 'string' && !sensitiveFields.has(key)) {
       req.body[key] = validator.escape(req.body[key]);
     }
   }

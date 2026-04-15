@@ -6,7 +6,7 @@ import rateLimit from "express-rate-limit";
 export const authenticateToken = async (req, res, next) => {
   try {
     const authHeader = req.headers.authorization;
-    const token = authHeader && authHeader.split(" ")[1]; // Bearer TOKEN
+    const token = authHeader?.split(" ")[1]; // Bearer TOKEN
 
     if (!token) {
       return res.status(401).json({
@@ -22,10 +22,17 @@ export const authenticateToken = async (req, res, next) => {
       "-hashed_password -salt",
     );
 
-    if (!user || !user.isActive) {
+    if (!user?.isActive) {
       return res.status(401).json({
         success: false,
         message: "User not found or account deactivated",
+      });
+    }
+
+    if ((decoded.tokenVersion || 0) !== (user.tokenVersion || 0)) {
+      return res.status(401).json({
+        success: false,
+        message: "Session is no longer valid. Please sign in again.",
       });
     }
 
@@ -59,7 +66,7 @@ export const authenticateToken = async (req, res, next) => {
 export const optionalAuth = async (req, res, next) => {
   try {
     const authHeader = req.headers.authorization;
-    const token = authHeader && authHeader.split(" ")[1];
+    const token = authHeader?.split(" ")[1];
 
     if (token) {
       const decoded = jwt.verify(token, process.env.JWT_SECRET);
@@ -67,14 +74,17 @@ export const optionalAuth = async (req, res, next) => {
         "-hashed_password -salt",
       );
 
-      if (user && user.isActive) {
+      if (user?.isActive) {
+        if ((decoded.tokenVersion || 0) !== (user.tokenVersion || 0)) {
+          return next();
+        }
         req.user = user;
       }
     }
 
     next();
   } catch (error) {
-    // Continue without authentication for optional auth
+    console.error("Optional auth parse error:", error.message || error);
     next();
   }
 };

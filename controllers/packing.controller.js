@@ -38,6 +38,10 @@ function getLargestCarton(cartons) {
 }
 
 function mapPackingErrorMessage(message) {
+  if (message.includes("Insufficient inventory")) {
+    return "Insufficient inventory";
+  }
+
   if (message.includes("No boxes found in inventory")) {
     return "No suitable box found.";
   }
@@ -87,7 +91,7 @@ export const enhancedPacking = async (req, res) => {
               id: c.id,
               name: c.name,
               cost: c.cost,
-              availableQuantity: c.quantity || 100,
+              availableQuantity: Math.max(0, Number.parseInt(c.quantity, 10) || 0),
             },
           ),
       );
@@ -121,11 +125,7 @@ export const enhancedPacking = async (req, res) => {
           return new Carton(l, b, h, mw, {
             id: box._id.toString(),
             name: box.box_name,
-            // Default to 100 if quantity is 0/unset so the algorithm doesn't skip it
-            availableQuantity:
-              Number.parseInt(box.quantity, 10) > 0
-                ? Number.parseInt(box.quantity, 10)
-                : 100,
+            availableQuantity: Math.max(0, Number.parseInt(box.quantity, 10) || 0),
           });
         })
         .filter(Boolean); // remove null entries from invalid boxes

@@ -7,6 +7,7 @@ import {
   forgotPasswordController,
   verifyForgotPasswordOtpController,
   resetPasswordController,
+  changePasswordController,
   signoutController,
   checkVerifiedController,
   resendActivationController,
@@ -15,6 +16,7 @@ import {
 import {
   authRateLimit,
   passwordResetRateLimit,
+  authenticateToken,
 } from "../middleware/auth.middleware.js";
 import {
   validateRegistration,
@@ -72,6 +74,14 @@ router.post(
   sanitizeInput,
   validatePasswordReset,
   resetPasswordController,
+);
+
+router.post(
+  "/change-password",
+  authenticateToken,
+  authRateLimit,
+  sanitizeInput,
+  changePasswordController,
 );
 
 router.post("/signout", signoutController);

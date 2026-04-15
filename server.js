@@ -92,7 +92,8 @@ app.use(
       callback(new Error("Blocked by CORS policy"));
     },
     methods: ["GET", "POST", "PUT", "DELETE", "PATCH"],
-    allowedHeaders: ["Content-Type", "Authorization"],
+    allowedHeaders: ["Content-Type", "Authorization", "Cookie"],
+    credentials: true,
   }),
 );
 
