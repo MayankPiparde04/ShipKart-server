@@ -9,7 +9,7 @@
   },
   "scripts": {
     "dev": "cross-env NODE_ENV=development nodemon server.js",
-    "start": "cross-env NODE_ENV=production node server.js"
+    "start": "node server.js"
   },
   "keywords": ["shipwise", "packing", "shipping"],
   "author": "Mayank Piparde",

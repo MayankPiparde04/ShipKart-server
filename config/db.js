@@ -1,8 +1,6 @@
 import mongoose from "mongoose";
 
 let dbStatus = { state: "disconnected", host: null, name: null };
-const MAX_RETRIES = 5;
-let retryCount = 0;
 
 const normalizeMongoUri = (inputUri) => {
   const raw = (inputUri || "").trim();
@@ -58,10 +56,34 @@ const normalizeMongoUri = (inputUri) => {
   return `${scheme}${username}:${encodedPassword}@${host}${pathAndQuery}`;
 };
 
-const connectDB = async () => {
+const classifyMongoError = (error) => {
+  const message = String(error?.message || "").toLowerCase();
+
+  if (
+    message.includes("authentication") ||
+    message.includes("auth") ||
+    error?.code === 18
+  ) {
+    return "Authentication";
+  }
+
+  if (
+    message.includes("timed out") ||
+    message.includes("network") ||
+    message.includes("econn") ||
+    message.includes("ip") ||
+    message.includes("whitelist")
+  ) {
+    return "Network/IP Whitelist";
+  }
+
+  return "Unknown";
+};
+
+const connectDB = async (explicitUri) => {
   try {
     const mongoUri = normalizeMongoUri(
-      process.env.MONGO_URI || process.env.MONGODB_URI || "",
+      explicitUri || process.env.MONGO_URI || process.env.MONGODB_URI || "",
     );
 
     if (!mongoUri) {
@@ -81,11 +103,11 @@ const connectDB = async () => {
     });
 
     dbStatus = { state: "connected", host: conn.connection.host, name: conn.connection.name };
-    retryCount = 0;
 
 
     mongoose.connection.on("error", (err) => {
-      console.error("MongoDB error:", err.message);
+      const errorType = classifyMongoError(err);
+      console.error(`MongoDB Runtime Error (${errorType}):`, err.message);
       dbStatus.state = "error";
     });
 
@@ -105,14 +127,9 @@ const connectDB = async () => {
     return conn;
   } catch (error) {
     dbStatus.state = "error";
-    console.error("Database connection failed:", error.message);
-
-    if (retryCount < MAX_RETRIES) {
-      retryCount++;
-      setTimeout(connectDB, 5000);
-    } else {
-      console.error("Max DB retries reached. Giving up.");
-    }
+    const errorType = classifyMongoError(error);
+    console.error(`Database connection failed (${errorType}):`, error.message);
+    throw error;
   }
 };
 

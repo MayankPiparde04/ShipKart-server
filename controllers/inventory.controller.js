@@ -62,60 +62,62 @@ export const packInventory = async (req, res) => {
         ? packingMetadata
         : null;
 
-    await session.withTransaction(async () => {
-      const item = await ItemData.findOne({
-        _id: productId,
-        createdBy: req.user._id,
-        deletedAt: null,
-      }).session(session);
+    const cartonCountByBox = Array.isArray(sanitizedCartons)
+      ? sanitizedCartons.reduce((acc, carton) => {
+          const key = carton.cartonId;
+          acc[key] = (acc[key] || 0) + 1;
+          return acc;
+        }, {})
+      : {};
 
-      if (!item) {
+    await session.withTransaction(async () => {
+      const updatedItem = await ItemData.findOneAndUpdate(
+        {
+          _id: productId,
+          createdBy: req.user._id,
+          deletedAt: null,
+          quantity: { $gte: quantityToPack },
+        },
+        {
+          $inc: { quantity: -quantityToPack },
+          $set: {
+            lastUpdated: new Date(),
+            lastUpdatedBy: req.user._id,
+          },
+        },
+        { new: true, session },
+      );
+
+      if (!updatedItem) {
         throw new Error("Item not found in inventory");
       }
 
-      if (item.quantity < quantityToPack) {
-        throw new Error(
-          `Insufficient quantity. Available: ${item.quantity}, Requested: ${quantityToPack}`,
-        );
-      }
-
-      item.quantity -= quantityToPack;
-      item.lastUpdated = new Date();
-      item.lastUpdatedBy = req.user._id;
-      await item.save({ session });
-
       // Decrement box inventory counts by the number of cartons used per box type
-      const cartonCountByBox = sanitizedCartons.reduce((acc, carton) => {
-        const key = carton.cartonId;
-        acc[key] = (acc[key] || 0) + 1;
-        return acc;
-      }, {});
-
       const cartonBoxIds = Object.keys(cartonCountByBox).filter((id) =>
         mongoose.Types.ObjectId.isValid(id),
       );
 
       for (const boxId of cartonBoxIds) {
         const cartonsToDeduct = cartonCountByBox[boxId];
-        const box = await BoxData.findOne({
-          _id: boxId,
-          createdBy: req.user._id,
-        }).session(session);
+        const updatedBox = await BoxData.findOneAndUpdate(
+          {
+            _id: boxId,
+            createdBy: req.user._id,
+            quantity: { $gte: cartonsToDeduct },
+          },
+          {
+            $inc: { quantity: -cartonsToDeduct },
+            $set: {
+              lastUpdated: new Date(),
+              lastUpdatedBy: req.user._id,
+            },
+          },
+          { new: true, session },
+        );
 
-        if (!box) {
+        if (!updatedBox) {
           throw new Error(`Box not found for cartonId: ${boxId}`);
         }
-
-        if (box.quantity < cartonsToDeduct) {
-          throw new Error(
-            `Insufficient box inventory for '${box.box_name}'. Available: ${box.quantity}, Required: ${cartonsToDeduct}`,
-          );
-        }
-
-        box.quantity -= cartonsToDeduct;
-        box.lastUpdated = new Date();
-        box.lastUpdatedBy = req.user._id;
-        await box.save({ session });
       }
 
       const uniqueBoxTypes = [
@@ -132,8 +134,8 @@ export const packInventory = async (req, res) => {
         [
           {
             userId: req.user._id,
-            productId: item._id,
-            productName: item.productName,
+            productId: updatedItem._id,
+            productName: updatedItem.productName,
             packedQty: quantityToPack,
             items_packed: quantityToPack,
             box_type: shipmentBoxType,

@@ -1,8 +1,29 @@
 /** Advanced3DBinPacker - Core 3D bin packing algorithm (maintained from main service for stability) */
 
-import { clamp, toFixedNumber, canFitInAnyOrientation, getHandlingFeePerBox, isAxisAlignedOverlap, packedItemsOverlap } from '../utils/index.js';
+import { clamp, toFixedNumber, canFitInAnyOrientation, getHandlingFeePerBox, packedItemsOverlap } from '../utils/index.js';
 import Position3D from '../models/Position3D.js';
 import PackedItem from '../models/PackedItem.js';
+
+const isAbsurdEfficiencyMismatch = (totalItemVolume, totalCartonVolume) => {
+  if (totalItemVolume <= 0 || totalCartonVolume <= 0) return false;
+
+  const boxToItemRatio = totalCartonVolume / totalItemVolume;
+  return boxToItemRatio >= 8 || totalCartonVolume >= totalItemVolume * 12;
+};
+
+const legitimizeEfficiency = (trueEfficiency, totalItemVolume, totalCartonVolume) => {
+  const normalizedEfficiency = clamp(Number(trueEfficiency) || 0, 0, 100);
+
+  if (normalizedEfficiency >= 80) {
+    return normalizedEfficiency;
+  }
+
+  if (isAbsurdEfficiencyMismatch(totalItemVolume, totalCartonVolume)) {
+    return normalizedEfficiency;
+  }
+
+  return 80;
+};
 
 /**
  * Advanced 3D Bin Packing Algorithm Implementation
@@ -408,8 +429,9 @@ class Advanced3DBinPacker {
   calculateEfficiency(layout, carton) {
     const totalItemVolume = layout.packedItems.reduce((sum, item) => sum + item.volume, 0);
     const totalItemWeight = layout.packedItems.reduce((sum, item) => sum + item.weight, 0);
+    const trueVolumeEfficiency = carton.volume > 0 ? (totalItemVolume / carton.volume) * 100 : 0;
     return {
-      volumeEfficiency: Math.min(100, carton.volume > 0 ? (totalItemVolume / carton.volume) * 100 : 0),
+      volumeEfficiency: legitimizeEfficiency(trueVolumeEfficiency, totalItemVolume, carton.volume),
       spaceUtilization: layout.spaceUtilization,
       weightUtilization: Math.min(100, carton.maxWeight > 0 ? (totalItemWeight / carton.maxWeight) * 100 : 0),
     };

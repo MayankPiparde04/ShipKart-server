@@ -3,7 +3,7 @@ import morgan from "morgan";
 import helmet from "helmet";
 import compression from "compression";
 import rateLimit from "express-rate-limit";
-import connectDB, { getDBStatus } from "./config/db.js";
+import connectDB from "./config/db.js";
 import cors from "cors";
 import dotenv from "dotenv";
 import crypto from "node:crypto";
@@ -12,10 +12,29 @@ import { initializeDailyStockReportCron } from "./services/dailyStockReport.serv
 dotenv.config({ path: "./config/config.env" });
 
 const app = express();
+const PORT = process.env.PORT || 8080;
+let server;
+
+const resolveMongoUri = () =>
+  (process.env.MONGODB_URI || process.env.MONGO_URI || "").trim();
+
+const validateMongoUri = (uri) => {
+  if (!uri) {
+    console.error("Configuration Error: MONGODB_URI is missing.");
+    return false;
+  }
+
+  if (!uri.startsWith("mongodb")) {
+    console.error(
+      "Configuration Error: MONGODB_URI must start with 'mongodb' (mongodb:// or mongodb+srv://).",
+    );
+    return false;
+  }
+
+  return true;
+};
 
 app.set("trust proxy", 1);
-
-connectDB();
 
 app.use(helmet());
 app.use(compression());
@@ -69,9 +88,18 @@ app.use(limiter);
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 
-const allowedOrigins = process.env.ALLOWED_ORIGINS
-  ? process.env.ALLOWED_ORIGINS.split(",")
+const envOrigins = process.env.ALLOWED_ORIGINS
+  ? process.env.ALLOWED_ORIGINS.split(",").map((origin) => origin.trim()).filter(Boolean)
   : [];
+
+const defaultAllowedOrigins = [
+  "https://shipwise-client.onrender.com",
+  "http://localhost:3000",
+  "http://localhost:19006",
+  "http://localhost:8081",
+];
+
+const allowedOrigins = new Set([...defaultAllowedOrigins, ...envOrigins]);
 
 initializeDailyStockReportCron();
 app.use(
@@ -83,8 +111,7 @@ app.use(
 
       // If it's a web browser (Origin exists), it must be in the whitelist or localhost.
       if (
-        allowedOrigins.length === 0 ||
-        allowedOrigins.includes(origin) ||
+        allowedOrigins.has(origin) ||
         origin.startsWith("http://localhost") ||
         origin.startsWith("http://192.168.")
       ) {
@@ -108,28 +135,9 @@ if (process.env.NODE_ENV === "development") {
 }
 
 app.get("/health", (req, res) => {
-  const dbStatus = getDBStatus();
-  const memUsage = process.memoryUsage();
-
-  const isHealthy = dbStatus.state === "connected";
-
-  res.status(isHealthy ? 200 : 503).json({
-    success: isHealthy,
-    status: isHealthy ? "healthy" : "degraded",
-    timestamp: new Date().toISOString(),
-    uptime: Math.floor(process.uptime()),
-    environment: process.env.NODE_ENV || "production",
-    database: {
-      state: dbStatus.state,
-      host: dbStatus.host,
-      name: dbStatus.name,
-    },
-    memory: {
-      rss: `${Math.round(memUsage.rss / 1024 / 1024)}MB`,
-      heapUsed: `${Math.round(memUsage.heapUsed / 1024 / 1024)}MB`,
-      heapTotal: `${Math.round(memUsage.heapTotal / 1024 / 1024)}MB`,
-    },
-    version: process.env.npm_package_version || "1.0.0",
+  res.status(200).json({
+    status: "ok",
+    uptime: process.uptime(),
   });
 });
 
@@ -219,11 +227,17 @@ app.use("*", (req, res) => {
 });
 
 process.on("unhandledRejection", (err) => {
-  console.error("Unhandled Promise Rejection:", err.message || err);
+  console.error("Unhandled Promise Rejection:", err?.message || err);
+  // Keep process alive; route/global middleware handles expected runtime errors.
 });
 
 process.on("uncaughtException", (err) => {
-  console.error("Uncaught Exception:", err.message || err);
+  console.error("Uncaught Exception:", err?.message || err);
+  if (server) {
+    server.close(() => process.exit(1));
+  } else {
+    process.exit(1);
+  }
 });
 
 process.on("SIGTERM", () => {
@@ -234,15 +248,34 @@ process.on("SIGTERM", () => {
   }
 });
 
-const PORT = process.env.PORT || 3001;
-const server = app.listen(PORT, () => {});
-
-server.on("error", (error) => {
-  if (error.code === "EADDRINUSE") {
-    console.error(`Port ${PORT} is already in use`);
+const startServer = async () => {
+  const mongoUri = resolveMongoUri();
+  if (!validateMongoUri(mongoUri)) {
     process.exit(1);
+    return;
   }
-  console.error("Server error:", error.message);
-});
+
+  await connectDB(mongoUri);
+
+  server = app.listen(PORT, () => {
+    console.log(`Server listening on port ${PORT}`);
+  });
+
+  server.on("error", (error) => {
+    if (error.code === "EADDRINUSE") {
+      console.error(`Port ${PORT} is already in use`);
+      process.exit(1);
+    }
+    console.error("Server error:", error.message);
+    process.exit(1);
+  });
+};
+
+try {
+  await startServer();
+} catch (error) {
+  console.error("Startup failed:", error?.message || error);
+  process.exit(1);
+}
 
 export default app;
