@@ -42,7 +42,7 @@ app.use((req, res, next) => {
 
 const strictLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 20,
+  max: 1000,
   message: {
     success: false,
     message: "Too many AI requests from this IP, please try again later.",
@@ -53,7 +53,7 @@ const strictLimiter = rateLimit({
 
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 100,
+  max: 1000,
   message: {
     success: false,
     message: "Too many requests from this IP, please try again later.",

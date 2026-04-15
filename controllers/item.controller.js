@@ -333,6 +333,76 @@ export const getItemById = async (req, res) => {
   }
 };
 
+export const updateItemById = async (req, res) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({
+        success: false,
+        message: "Validation failed",
+        errors: errors.array(),
+      });
+    }
+
+    const { id } = req.params;
+    if (!id || id === "undefined") {
+      return res.status(400).json({
+        success: false,
+        message: "Valid item id is required",
+      });
+    }
+
+    const updatePayload = {
+      ...req.body,
+      lastUpdated: new Date(),
+      lastUpdatedBy: req.user._id,
+    };
+
+    delete updatePayload._id;
+    delete updatePayload.createdBy;
+    delete updatePayload.createdAt;
+    delete updatePayload.deletedAt;
+
+    const existingItem = await ItemData.findOne({
+      _id: id,
+      createdBy: req.user._id,
+      deletedAt: null,
+    });
+
+    if (!existingItem) {
+      return res.status(404).json({
+        success: false,
+        message: "Item not found",
+      });
+    }
+
+    const item = await ItemData.findByIdAndUpdate(id, updatePayload, {
+      new: true,
+      runValidators: true,
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: "Item updated successfully",
+      data: item,
+    });
+  } catch (error) {
+    console.error("Error updating item by id:", error);
+
+    if (error.code === 11000) {
+      return res.status(409).json({
+        success: false,
+        message: "Item with this name already exists",
+      });
+    }
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to update item",
+    });
+  }
+};
+
 export const deleteItem = async (req, res) => {
   try {
     const item = await ItemData.findByIdAndUpdate(

@@ -76,6 +76,14 @@ router.post(
   itemController.createOrUpdateItem,
 );
 
+router.put(
+  "/updateitem/:id",
+  authenticateToken,
+  sanitizeInput,
+  validateItemData,
+  itemController.updateItemById,
+);
+
 // Fetch All Items with pagination and filtering
 router.get(
   "/getitemdata",
