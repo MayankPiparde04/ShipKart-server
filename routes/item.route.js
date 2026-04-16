@@ -3,7 +3,6 @@ import { body } from "express-validator";
 import { authenticateToken } from "../middleware/auth.middleware.js";
 import {
   sanitizeInput,
-  validatePagination,
 } from "../middleware/validation.middleware.js";
 import * as itemController from "../controllers/item.controller.js";
 
@@ -88,7 +87,6 @@ router.put(
 router.get(
   "/getitemdata",
   authenticateToken,
-  validatePagination,
   itemController.getItems,
 );
 

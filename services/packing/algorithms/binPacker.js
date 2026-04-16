@@ -13,16 +13,7 @@ const isAbsurdEfficiencyMismatch = (totalItemVolume, totalCartonVolume) => {
 
 const legitimizeEfficiency = (trueEfficiency, totalItemVolume, totalCartonVolume) => {
   const normalizedEfficiency = clamp(Number(trueEfficiency) || 0, 0, 100);
-
-  if (normalizedEfficiency >= 80) {
-    return normalizedEfficiency;
-  }
-
-  if (isAbsurdEfficiencyMismatch(totalItemVolume, totalCartonVolume)) {
-    return normalizedEfficiency;
-  }
-
-  return 80;
+  return normalizedEfficiency;
 };
 
 /**
@@ -391,12 +382,12 @@ class Advanced3DBinPacker {
 
   getAllOrientations(product) {
     const orientations = [
-      { dims: [product.length, product.breadth, product.height], name: 'L×B×H', index: 0 },
-      { dims: [product.length, product.height, product.breadth], name: 'L×H×B', index: 1 },
-      { dims: [product.breadth, product.length, product.height], name: 'B×L×H', index: 2 },
-      { dims: [product.breadth, product.height, product.length], name: 'B×H×L', index: 3 },
-      { dims: [product.height, product.length, product.breadth], name: 'H×L×B', index: 4 },
-      { dims: [product.height, product.breadth, product.length], name: 'H×B×L', index: 5 },
+      { dims: [product.length, product.breadth, product.height], name: 'Standing Upright', index: 0 },
+      { dims: [product.length, product.height, product.breadth], name: 'Lying on Side', index: 1 },
+      { dims: [product.breadth, product.length, product.height], name: 'Standing Upright', index: 2 },
+      { dims: [product.breadth, product.height, product.length], name: 'Lying on Side', index: 3 },
+      { dims: [product.height, product.length, product.breadth], name: 'Lying Flat', index: 4 },
+      { dims: [product.height, product.breadth, product.length], name: 'Lying Flat', index: 5 },
     ];
 
     if (!product.canRotate) return [orientations[0]];

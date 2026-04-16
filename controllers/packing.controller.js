@@ -3,7 +3,6 @@ import {
   Product,
   Carton,
 } from "../services/packing.service.js";
-import BoxData from "../models/box.model.js";
 
 function canFitInAnyRotation(product, carton) {
   const productDimensions = [product.length, product.breadth, product.height]
@@ -61,81 +60,129 @@ function mapPackingErrorMessage(message) {
   return null;
 }
 
+function normalizeOrientation(orientation) {
+  const orientationLabels = {
+    0: "Standing Upright",
+    1: "Lying on Side",
+    2: "Standing Upright",
+    3: "Lying on Side",
+    4: "Lying Flat",
+    5: "Lying Flat",
+  };
+  const orientationAlias = {
+    "L×B×H": "Standing Upright",
+    "B×L×H": "Standing Upright",
+    "L×H×B": "Lying on Side",
+    "B×H×L": "Lying on Side",
+    "H×L×B": "Lying Flat",
+    "H×B×L": "Lying Flat",
+  };
+
+  const deriveAliasFromWords = (value) => {
+    if (typeof value !== "string") return null;
+    const lettersOnly = value.toUpperCase().replaceAll(/[^LBH]/g, "");
+    const wordAliasMap = {
+      LBH: "Standing Upright",
+      BLH: "Standing Upright",
+      LHB: "Lying on Side",
+      BHL: "Lying on Side",
+      HLB: "Lying Flat",
+      HBL: "Lying Flat",
+    };
+    return wordAliasMap[lettersOnly] || null;
+  };
+
+  if (typeof orientation === "string") {
+    return (
+      orientationAlias[orientation] ||
+      deriveAliasFromWords(orientation) ||
+      orientation
+    );
+  }
+  if (Number.isInteger(orientation) && orientationLabels[orientation]) {
+    return orientationLabels[orientation];
+  }
+  if (orientation && typeof orientation.name === "string") {
+    return orientation.name;
+  }
+  return null;
+}
+
 // Enhanced endpoint for multiple products packing
 export const enhancedPacking = async (req, res) => {
   try {
-    const { products, cartons: customCartons, options } = req.body;
+    const { selectedItems, availableBoxes, options } = req.body;
+    const legacyBoxes = req.body?.boxes;
+    const legacyBoxData = req.body?.boxData;
+    const products = selectedItems;
+    const boxes = availableBoxes;
+
+    console.log("Boxes Sync Check:", Array.isArray(availableBoxes) ? availableBoxes.length : 0);
+
+    if (
+      (!Array.isArray(availableBoxes) || availableBoxes.length === 0) &&
+      ((Array.isArray(legacyBoxes) && legacyBoxes.length > 0) ||
+        (Array.isArray(legacyBoxData) && legacyBoxData.length > 0))
+    ) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Payload mismatch: use 'availableBoxes' (not 'boxes' or 'boxData') in /optimal-analysis request body.",
+      });
+    }
 
     if (!products || !Array.isArray(products) || products.length === 0) {
       return res.status(400).json({
         success: false,
-        message: "Products array is required and cannot be empty",
+        message: "selectedItems array is required and cannot be empty",
       });
     }
 
-    // Fetch cartons if not provided
-    let cartons = [];
-    if (
-      customCartons &&
-      Array.isArray(customCartons) &&
-      customCartons.length > 0
-    ) {
-      cartons = customCartons.map(
-        (c) =>
-          new Carton(
-            Number.parseFloat(c.length),
-            Number.parseFloat(c.breadth),
-            Number.parseFloat(c.height),
-            Number.parseFloat(c.maxWeight),
-            {
-              id: c.id,
-              name: c.name,
-              cost: c.cost,
-              availableQuantity: Math.max(0, Number.parseInt(c.quantity, 10) || 0),
-            },
-          ),
-      );
-    } else {
-      // Fetch from database
-      const dbBoxes = await BoxData.find({});
-      if (dbBoxes.length === 0) {
-        return res.status(404).json({
-          success: false,
-          message:
-            "No cartons found in database. Please provide cartons or add to inventory.",
+    if (!boxes || !Array.isArray(boxes) || boxes.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "availableBoxes array is required and cannot be empty",
+      });
+    }
+
+    const cartons = boxes
+      .map((box) => {
+        const l = Number.parseFloat(box.length ?? box.boxLength ?? box.L ?? 0);
+        const b = Number.parseFloat(box.width ?? box.breadth ?? box.boxWidth ?? box.W ?? 0);
+        const h = Number.parseFloat(box.height ?? box.boxHeight ?? box.H ?? 0);
+        const mw = Number.parseFloat(
+          box.maxWeight ?? box.max_weight ?? box.maxWeightCapacity ?? 0,
+        );
+        const boxCost = Number.parseFloat(box?.cost ?? box?.price ?? 0) || 0;
+
+        if (l <= 0 || b <= 0 || h <= 0 || mw <= 0) {
+          console.warn(
+            `[Packing] Skipping invalid provided box: ${box?.boxName || box?.name || box?.box_name || "unknown"}`,
+          );
+          return null;
+        }
+
+        return new Carton(l, b, h, mw, {
+          id: String(box?._id || box?.id || ""),
+          name: box?.boxName || box?.name || box?.box_name || "Box",
+          cost: boxCost,
+          availableQuantity: Math.max(0, Number.parseInt(box.quantity, 10) || 0),
         });
-      }
+      })
+      .filter(Boolean);
 
-      cartons = dbBoxes
-        .map((box) => {
-          // Box model stores dimensions in INCHES and weight in KG
-          // Item dimensions are in CM and weight in GRAMS → convert to match
-          const l = (Number.parseFloat(box.length) || 0) * 2.54; // inches → cm
-          const b = (Number.parseFloat(box.breadth) || 0) * 2.54; // inches → cm
-          const h = (Number.parseFloat(box.height) || 0) * 2.54; // inches → cm
-          const mw = (Number.parseFloat(box.max_weight) || 0) * 1000; // kg → grams
-
-          if (l <= 0 || b <= 0 || h <= 0 || mw <= 0) {
-            console.warn(
-              `Skipping invalid box: ${box.box_name} (missing dimensions/weight)`,
-            );
-            return null;
-          }
-
-          return new Carton(l, b, h, mw, {
-            id: box._id.toString(),
-            name: box.box_name,
-            availableQuantity: Math.max(0, Number.parseInt(box.quantity, 10) || 0),
-          });
-        })
-        .filter(Boolean); // remove null entries from invalid boxes
+    if (!cartons.length) {
+      return res.status(400).json({
+        success: false,
+        message: "No valid boxes were provided in availableBoxes",
+      });
     }
 
     // Prepare products
     const productObjects = products.map((p) => {
-      const l = Number.parseFloat(p.length) || 0;
-      const b = Number.parseFloat(p.breadth) || 0;
-      const h = Number.parseFloat(p.height) || 0;
+      const l = Number.parseFloat(p.length ?? p.dimensions?.length) || 0;
+      const b = Number.parseFloat(p.breadth ?? p.width ?? p.dimensions?.breadth ?? p.dimensions?.width) || 0;
+      const h = Number.parseFloat(p.height ?? p.dimensions?.height) || 0;
       const w = Number.parseFloat(p.weight) || 0;
       const q = Number.parseInt(p.quantity, 10) || 1;
 
@@ -150,7 +197,11 @@ export const enhancedPacking = async (req, res) => {
         name: p.name,
         isFragile: p.isFragile,
         value: p.price,
-        weightPerUnitKg: Number.parseFloat(p.weight_per_unit) || undefined,
+        // Compare item grams against carton maxWeight (kg).
+        weightPerUnitKg:
+          Number.parseFloat(p.weight_per_unit ?? p.weight) > 0
+            ? Number.parseFloat(p.weight_per_unit ?? p.weight) / 1000
+            : undefined,
         maxVerticalStack:
           Number.parseInt(p.max_vertical_stack, 10) || undefined,
         crushResistanceKg:
@@ -182,10 +233,86 @@ export const enhancedPacking = async (req, res) => {
     // Calculate packing
     const result = calculateOptimalPacking(productObjects, cartons, options);
 
+    const boxById = new Map(
+      boxes.map((box) => [String(box?._id || box?.id || ""), box]),
+    );
+    const boxByName = new Map(
+      boxes.map((box) => [String(box?.boxName || box?.box_name || box?.name || ""), box]),
+    );
+
+    const enrichedPackingResults = (result?.packingResults || []).map((entry, index) => {
+      const cartonId = String(
+        entry?.cartonDetails?.id || entry?.carton?.id || entry?.carton?._id || "",
+      );
+      const cartonName = String(
+        entry?.cartonDetails?.name || entry?.carton?.name || "",
+      );
+
+      const syncedBox =
+        boxById.get(cartonId) || boxByName.get(cartonName) || boxes[index] || null;
+
+      const boxLength = Number.parseFloat(
+        syncedBox?.length ??
+          syncedBox?.boxLength ??
+          entry?.cartonDetails?.length ??
+          entry?.carton?.length ??
+          0,
+      ) || 0;
+      const boxWidth = Number.parseFloat(
+        syncedBox?.width ??
+          syncedBox?.breadth ??
+          syncedBox?.boxWidth ??
+          entry?.cartonDetails?.width ??
+          entry?.cartonDetails?.breadth ??
+          entry?.carton?.width ??
+          entry?.carton?.breadth ??
+          0,
+      ) || 0;
+      const boxHeight = Number.parseFloat(
+        syncedBox?.height ??
+          syncedBox?.boxHeight ??
+          entry?.cartonDetails?.height ??
+          entry?.carton?.height ??
+          0,
+      ) || 0;
+      const normalizedOrientation = normalizeOrientation(entry?.orientation);
+
+      return {
+        ...entry,
+        orientation: normalizedOrientation,
+        cartonDetails: {
+          ...entry?.cartonDetails,
+          id: cartonId || String(syncedBox?._id || syncedBox?.id || ""),
+          name:
+            entry?.cartonDetails?.name ||
+            syncedBox?.boxName ||
+            syncedBox?.box_name ||
+            syncedBox?.name ||
+            entry?.carton?.name ||
+            "Box",
+          boxLength,
+          boxWidth,
+          boxHeight,
+          length: boxLength,
+          width: boxWidth,
+          breadth: boxWidth,
+          height: boxHeight,
+          volume:
+            Number.parseFloat(entry?.cartonDetails?.volume) ||
+            Number.parseFloat(entry?.carton?.volume) ||
+            (boxLength > 0 && boxWidth > 0 && boxHeight > 0
+              ? boxLength * boxWidth * boxHeight
+              : 0),
+          orientation: normalizedOrientation,
+        },
+      };
+    });
+
     res.status(200).json({
       success: true,
       message: "Enhanced packing calculation completed successfully",
       ...result,
+      packingResults: enrichedPackingResults,
     });
   } catch (error) {
     console.error("Error in enhanced packing:", error?.stack || error);

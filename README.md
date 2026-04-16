@@ -76,7 +76,7 @@ DELETE /api/boxes/:id         # Delete box
 
 ### Packing Optimization
 ```
-POST   /api/optimal-packing2        # Enhanced 3D packing for single product
+POST   /api/optimal-analysis        # Enhanced 3D packing analysis
 POST   /api/enhanced-packing        # Multi-product packing optimization
 POST   /api/calculate-shipping      # Shipping calculation
 GET    /api/carton-sizes           # Available carton sizes
@@ -172,7 +172,7 @@ The enhanced packing endpoint supports multiple algorithms:
 
 **Optimal Packing Request:**
 ```javascript
-POST /api/optimal-packing2
+POST /api/optimal-analysis
 {
   "productId": "product_id_here",
   "quantity": 50,

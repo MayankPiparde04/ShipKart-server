@@ -15,25 +15,6 @@ const app = express();
 const PORT = process.env.PORT || 8080;
 let server;
 
-const resolveMongoUri = () =>
-  (process.env.MONGODB_URI || "").trim();
-
-const validateMongoUri = (uri) => {
-  if (!uri) {
-    console.error("Configuration Error: MONGODB_URI is missing.");
-    return false;
-  }
-
-  if (!uri.startsWith("mongodb")) {
-    console.error(
-      "Configuration Error: MONGODB_URI must start with 'mongodb' (mongodb:// or mongodb+srv://).",
-    );
-    return false;
-  }
-
-  return true;
-};
-
 app.set("trust proxy", 1);
 
 app.use(helmet());
@@ -219,7 +200,7 @@ app.use((err, req, res, next) => {
   });
 });
 
-app.use("*", (req, res) => {
+app.use("/{*path}", (req, res) => {
   res.status(404).json({
     success: false,
     message: `Route ${req.originalUrl} not found`,
@@ -249,13 +230,12 @@ process.on("SIGTERM", () => {
 });
 
 const startServer = async () => {
-  const mongoUri = resolveMongoUri();
-  if (!validateMongoUri(mongoUri)) {
+  const connection = await connectDB();
+  if (!connection) {
+    console.error("Startup aborted: invalid or missing MongoDB URI.");
     process.exit(1);
     return;
   }
-
-  await connectDB(mongoUri);
 
   server = app.listen(PORT, () => {
     console.log(`Server listening on port ${PORT}`);

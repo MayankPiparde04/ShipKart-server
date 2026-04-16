@@ -223,9 +223,11 @@ export const getItems = async (req, res) => {
       });
     }
 
-    const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 10;
-    const skip = (page - 1) * limit;
+    const parsedPage = Number.parseInt(req.query.page, 10);
+    const parsedLimit = Number.parseInt(req.query.limit, 10);
+    const page = Number.isInteger(parsedPage) && parsedPage > 0 ? parsedPage : 1;
+    const hasLimit = Number.isInteger(parsedLimit) && parsedLimit > 0;
+    const skip = hasLimit ? (page - 1) * parsedLimit : 0;
 
     const {
       category,
@@ -254,10 +256,17 @@ export const getItems = async (req, res) => {
     const sort = {};
     sort[sortBy] = sortOrder === "desc" ? -1 : 1;
 
+    const itemsQuery = ItemData.find(filter).sort(sort);
+    if (hasLimit) {
+      itemsQuery.skip(skip).limit(parsedLimit);
+    }
+
     const [items, total] = await Promise.all([
-      ItemData.find(filter).sort(sort).skip(skip).limit(limit).lean(),
+      itemsQuery.lean(),
       ItemData.countDocuments(filter),
     ]);
+
+    const totalPages = hasLimit ? Math.ceil(total / parsedLimit) : 1;
 
     const dailyData = await getDailyTransactionData(req.user._id);
 
@@ -290,11 +299,11 @@ export const getItems = async (req, res) => {
         items,
         pagination: {
           currentPage: page,
-          totalPages: Math.ceil(total / limit),
+          totalPages,
           totalItems: total,
-          itemsPerPage: limit,
-          hasNextPage: page < Math.ceil(total / limit),
-          hasPrevPage: page > 1,
+          itemsPerPage: hasLimit ? parsedLimit : total,
+          hasNextPage: hasLimit ? page < totalPages : false,
+          hasPrevPage: hasLimit ? page > 1 : false,
         },
         dailyData: dailyData.data,
         dailySold,

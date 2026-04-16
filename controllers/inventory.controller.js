@@ -9,6 +9,54 @@ import { toDateKey } from "../utils/date.utils.js";
 export const packInventory = async (req, res) => {
   const session = await mongoose.startSession();
 
+  const normalizeOrientation = (orientation) => {
+    const orientationLabels = {
+      0: "Standing Upright",
+      1: "Lying on Side",
+      2: "Standing Upright",
+      3: "Lying on Side",
+      4: "Lying Flat",
+      5: "Lying Flat",
+    };
+    const orientationAlias = {
+      "L×B×H": "Standing Upright",
+      "B×L×H": "Standing Upright",
+      "L×H×B": "Lying on Side",
+      "B×H×L": "Lying on Side",
+      "H×L×B": "Lying Flat",
+      "H×B×L": "Lying Flat",
+    };
+
+    const deriveAliasFromWords = (value) => {
+      if (typeof value !== "string") return null;
+      const lettersOnly = value.toUpperCase().replaceAll(/[^LBH]/g, "");
+      const wordAliasMap = {
+        LBH: "Standing Upright",
+        BLH: "Standing Upright",
+        LHB: "Lying on Side",
+        BHL: "Lying on Side",
+        HLB: "Lying Flat",
+        HBL: "Lying Flat",
+      };
+      return wordAliasMap[lettersOnly] || null;
+    };
+
+    if (typeof orientation === "string") {
+      return (
+        orientationAlias[orientation] ||
+        deriveAliasFromWords(orientation) ||
+        orientation
+      );
+    }
+    if (Number.isInteger(orientation) && orientationLabels[orientation]) {
+      return orientationLabels[orientation];
+    }
+    if (orientation && typeof orientation.name === "string") {
+      return orientation.name;
+    }
+    return null;
+  };
+
   try {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
@@ -45,7 +93,7 @@ export const packInventory = async (req, res) => {
               1,
               Number.parseInt(carton?.itemsPacked || carton?.quantity || 1, 10),
             ),
-            orientation: carton?.orientation || null,
+            orientation: normalizeOrientation(carton?.orientation),
             dimensionsUsed: carton?.dimensionsUsed
               ? {
                   length: Number(carton.dimensionsUsed.length) || null,
@@ -92,32 +140,35 @@ export const packInventory = async (req, res) => {
         throw new Error("Item not found in inventory");
       }
 
-      // Decrement box inventory counts by the number of cartons used per box type
+      // Decrement box inventory by cartons used, and abort atomically if any box stock is insufficient.
       const cartonBoxIds = Object.keys(cartonCountByBox).filter((id) =>
         mongoose.Types.ObjectId.isValid(id),
       );
 
       for (const boxId of cartonBoxIds) {
         const cartonsToDeduct = cartonCountByBox[boxId];
-        const updatedBox = await BoxData.findOneAndUpdate(
-          {
-            _id: boxId,
-            createdBy: req.user._id,
-            quantity: { $gte: cartonsToDeduct },
-          },
-          {
-            $inc: { quantity: -cartonsToDeduct },
-            $set: {
-              lastUpdated: new Date(),
-              lastUpdatedBy: req.user._id,
-            },
-          },
-          { new: true, session },
-        );
+        const boxRecord = await BoxData.findOne({
+          _id: boxId,
+          createdBy: req.user._id,
+        }).session(session);
 
-        if (!updatedBox) {
-          throw new Error(`Box not found for cartonId: ${boxId}`);
+        const cartonLabel =
+          sanitizedCartons.find((carton) => carton.cartonId === boxId)?.cartonName ||
+          boxRecord?.box_name ||
+          "Unknown Box";
+
+        if (!boxRecord) {
+          throw new Error(`Out of Stock: Box ${cartonLabel}`);
         }
+
+        if (Number(boxRecord.quantity || 0) < cartonsToDeduct) {
+          throw new Error(`Out of Stock: Box ${boxRecord.box_name}`);
+        }
+
+        boxRecord.quantity = Number(boxRecord.quantity || 0) - cartonsToDeduct;
+        boxRecord.lastUpdated = new Date();
+        boxRecord.lastUpdatedBy = req.user._id;
+        await boxRecord.save({ session });
       }
 
       const uniqueBoxTypes = [
@@ -170,7 +221,7 @@ export const packInventory = async (req, res) => {
   } catch (error) {
     console.error("Error packing inventory:", error);
 
-    const statusCode = /not found|insufficient|invalid|required|failed/i.test(error.message)
+    const statusCode = /not found|insufficient|invalid|required|failed|out of stock/i.test(error.message)
       ? 400
       : 500;
 

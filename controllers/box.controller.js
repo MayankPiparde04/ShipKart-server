@@ -180,9 +180,11 @@ export const getBoxes = async (req, res) => {
       });
     }
 
-    const page = Number.parseInt(req.query.page, 10) || 1;
-    const limit = Number.parseInt(req.query.limit, 10) || 20;
-    const skip = (page - 1) * limit;
+    const parsedPage = Number.parseInt(req.query.page, 10);
+    const parsedLimit = Number.parseInt(req.query.limit, 10);
+    const page = Number.isInteger(parsedPage) && parsedPage > 0 ? parsedPage : 1;
+    const hasLimit = Number.isInteger(parsedLimit) && parsedLimit > 0;
+    const skip = hasLimit ? (page - 1) * parsedLimit : 0;
 
     const {
       search,
@@ -212,12 +214,14 @@ export const getBoxes = async (req, res) => {
     const sort = {};
     sort[sortBy] = sortOrder === "desc" ? -1 : 1;
 
-    let query = BoxData.find(filter).sort(sort).skip(skip).limit(limit);
+    const query = BoxData.find(filter).sort(sort);
+    if (hasLimit) {
+      query.skip(skip).limit(parsedLimit);
+    }
 
-    const [boxes, total] = await Promise.all([
-      query.lean(),
-      BoxData.countDocuments(filter),
-    ]);
+    const [boxes, total] = await Promise.all([query.lean(), BoxData.countDocuments(filter)]);
+
+    const totalPages = hasLimit ? Math.ceil(total / parsedLimit) : 1;
 
     // Calculate volume for each box and apply volume filter if needed
     let processedBoxes = boxes.map((box) => ({
@@ -245,11 +249,11 @@ export const getBoxes = async (req, res) => {
         boxes: processedBoxes,
         pagination: {
           currentPage: page,
-          totalPages: Math.ceil(total / limit),
+          totalPages,
           totalBoxes: total,
-          boxesPerPage: limit,
-          hasNextPage: page < Math.ceil(total / limit),
-          hasPrevPage: page > 1,
+          boxesPerPage: hasLimit ? parsedLimit : total,
+          hasNextPage: hasLimit ? page < totalPages : false,
+          hasPrevPage: hasLimit ? page > 1 : false,
         },
         filters: {
           search,

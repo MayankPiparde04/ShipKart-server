@@ -3,7 +3,6 @@ import { body } from "express-validator";
 import { authenticateToken } from "../middleware/auth.middleware.js";
 import {
   sanitizeInput,
-  validatePagination,
 } from "../middleware/validation.middleware.js";
 import * as boxController from "../controllers/box.controller.js";
 
@@ -70,7 +69,13 @@ router.post(
 router.get(
   "/getboxes",
   authenticateToken,
-  validatePagination,
+  boxController.getBoxes,
+);
+
+// Alias route used by analysis flow
+router.get(
+  "/boxes",
+  authenticateToken,
   boxController.getBoxes,
 );
 

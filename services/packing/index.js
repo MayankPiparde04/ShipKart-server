@@ -1,37 +1,15 @@
 /** Main packing service orchestrator - coordinates modular components */
 
 import {
-  clamp,
   toFixedNumber,
   safeSum,
   canFitInAnyOrientation,
   getLargestAvailableCarton,
   FRAGILE_HANDLING_SURCHARGE,
 } from './utils/index.js';
-import { calculateOverallPackingScore, calculateWasteAnalysis, calculateStackingAnalysis, estimateCarbonFootprint } from './analytics/quality.js';
+import { estimateCarbonFootprint } from './analytics/quality.js';
 import { generatePackingRecommendations } from './analytics/recommendations.js';
 import Advanced3DBinPacker from './algorithms/binPacker.js';
-
-const isAbsurdEfficiencyMismatch = (totalItemVolume, totalCartonVolume) => {
-  if (totalItemVolume <= 0 || totalCartonVolume <= 0) return false;
-
-  const boxToItemRatio = totalCartonVolume / totalItemVolume;
-  return boxToItemRatio >= 8 || totalCartonVolume >= totalItemVolume * 12;
-};
-
-const legitimizeEfficiency = (trueEfficiency, totalItemVolume, totalCartonVolume) => {
-  const normalizedEfficiency = clamp(Number(trueEfficiency) || 0, 0, 100);
-
-  if (normalizedEfficiency >= 80) {
-    return normalizedEfficiency;
-  }
-
-  if (isAbsurdEfficiencyMismatch(totalItemVolume, totalCartonVolume)) {
-    return normalizedEfficiency;
-  }
-
-  return 80;
-};
 
 const validatePackingInputs = (availableBoxes, productArray) => {
   if (!availableBoxes.length) throw new Error('No boxes found in inventory.');
@@ -104,17 +82,6 @@ const calculateOptimalPacking = (products, cartons, options = {}) => {
   const totalItemsPacked = safeSum(allResults, (r) => r.itemsPacked);
   const totalRequested = safeSum(productArray, (p) => p.quantity);
   const totalCartonsUsed = allResults.length;
-  const totalPackedVolume = safeSum(
-    allResults,
-    (r) => safeSum(r?.layout?.packedItems || [], (item) => item.volume || 0),
-  );
-  const totalCartonVolume = safeSum(allResults, (r) => r.cartonDetails?.volume || 0);
-  const trueVolumeEfficiency = totalCartonVolume > 0 ? (totalPackedVolume / totalCartonVolume) * 100 : 0;
-  const overallVolumeEfficiency = legitimizeEfficiency(
-    trueVolumeEfficiency,
-    totalPackedVolume,
-    totalCartonVolume,
-  );
 
   const totalWeightGrams = safeSum(allResults, (r) => (r.itemsPacked || 0) * (r.unitWeightGrams || 0));
   const totalWeightKg = totalWeightGrams / 1000;
@@ -136,18 +103,11 @@ const calculateOptimalPacking = (products, cartons, options = {}) => {
 
   // Analytics
   const analytics = {
-    packingQuality: {
-    overallScore: calculateOverallPackingScore(allResults),
-      wasteAnalysis: calculateWasteAnalysis(allResults),
-      stackingAnalysis: calculateStackingAnalysis(allResults),
-    costEfficiency: totalItemsPacked > 0 ? toFixedNumber(estimatedCost / totalItemsPacked) : 0,
-    },
     recommendations: generatePackingRecommendations(
       allResults,
       unpackedProducts,
       cartons,
       productArray,
-      overallVolumeEfficiency,
       null,
     ),
     sustainability: {
@@ -168,7 +128,6 @@ const calculateOptimalPacking = (products, cartons, options = {}) => {
       totalCartonsUsed,
       packingSuccess: unpackedProducts.length === 0,
       packingRate: toFixedNumber((totalItemsPacked / totalRequested) * 100),
-      overallVolumeEfficiency: toFixedNumber(overallVolumeEfficiency),
       totalCost,
       totalWeightKg: toFixedNumber(totalWeightKg),
       estimatedCost: {

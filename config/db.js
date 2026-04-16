@@ -1,67 +1,19 @@
 import mongoose from "mongoose";
 
 let dbStatus = { state: "disconnected", host: null, name: null };
+let lifecycleHandlersRegistered = false;
 
-const normalizeMongoUri = (inputUri) => {
-  const raw = (inputUri || "").trim();
-  const cleaned =
-    (raw.startsWith("\"") && raw.endsWith("\"")) ||
-    (raw.startsWith("'") && raw.endsWith("'"))
-      ? raw.slice(1, -1)
-      : raw;
-
-  if (!cleaned) return "";
-  if (!/^mongodb(\+srv)?:\/\//i.test(cleaned)) {
-    throw new Error("Mongo URI must start with mongodb:// or mongodb+srv://");
-  }
-
-  const schemeMatch = cleaned.match(/^(mongodb(?:\+srv)?:\/\/)(.*)$/i);
-  if (!schemeMatch) return cleaned;
-
-  const scheme = schemeMatch[1];
-  const remainder = schemeMatch[2];
-  const slashIndex = remainder.indexOf("/");
-  const authority = slashIndex === -1 ? remainder : remainder.slice(0, slashIndex);
-  const pathAndQuery = slashIndex === -1 ? "" : remainder.slice(slashIndex);
-
-  // No credentials present.
-  if (!authority.includes("@") || !authority.includes(":")) {
-    return cleaned;
-  }
-
-  const atIndex = authority.lastIndexOf("@");
-  if (atIndex <= 0) return cleaned;
-
-  const credentials = authority.slice(0, atIndex);
-  const host = authority.slice(atIndex + 1);
-  const colonIndex = credentials.indexOf(":");
-
-  if (colonIndex <= 0) return cleaned;
-
-  const username = credentials.slice(0, colonIndex);
-  const rawPassword = credentials.slice(colonIndex + 1);
-
-  if (!rawPassword) {
-    return `${scheme}${credentials}@${host}${pathAndQuery}`;
-  }
-
-  let decodedPassword = rawPassword;
-  try {
-    decodedPassword = decodeURIComponent(rawPassword);
-  } catch {
-    decodedPassword = rawPassword;
-  }
-
-  const encodedPassword = encodeURIComponent(decodedPassword);
-  return `${scheme}${username}:${encodedPassword}@${host}${pathAndQuery}`;
-};
+const maskMongoUri = (uri) =>
+  uri.replace(/(mongodb(?:\+srv)?:\/\/[^:]+:)([^@]*)(@)/i, "$1***$3");
 
 const classifyMongoError = (error) => {
   const message = String(error?.message || "").toLowerCase();
+  const name = String(error?.name || "").toLowerCase();
 
   if (
     message.includes("authentication") ||
     message.includes("auth") ||
+    name.includes("auth") ||
     error?.code === 18
   ) {
     return "Authentication";
@@ -70,9 +22,14 @@ const classifyMongoError = (error) => {
   if (
     message.includes("timed out") ||
     message.includes("network") ||
+    message.includes("server selection") ||
+    message.includes("topology") ||
     message.includes("econn") ||
     message.includes("ip") ||
-    message.includes("whitelist")
+    message.includes("whitelist") ||
+    message.includes("timeout") ||
+    name.includes("network") ||
+    name.includes("serverselection")
   ) {
     return "Network/IP Whitelist";
   }
@@ -80,49 +37,72 @@ const classifyMongoError = (error) => {
   return "Unknown";
 };
 
+const registerConnectionLifecycleHandlers = () => {
+  if (lifecycleHandlersRegistered) return;
+  lifecycleHandlersRegistered = true;
+
+  mongoose.connection.on("connecting", () => {
+    dbStatus.state = "connecting";
+  });
+
+  mongoose.connection.on("error", (err) => {
+    const errorType = classifyMongoError(err);
+    console.error(`MongoDB Runtime Error (${errorType}):`, err.message);
+    dbStatus.state = "error";
+  });
+
+  mongoose.connection.on("disconnected", () => {
+    dbStatus.state = "disconnected";
+  });
+
+  mongoose.connection.on("reconnected", () => {
+    dbStatus.state = "connected";
+  });
+
+  process.once("SIGINT", async () => {
+    await mongoose.connection.close();
+    process.exit(0);
+  });
+};
+
 const connectDB = async (explicitUri) => {
   try {
-    const mongoUri = normalizeMongoUri(
-      explicitUri || process.env.MONGODB_URI || "",
-    );
+    const rawMongoUri = explicitUri ?? process.env.MONGODB_URI;
 
-    if (!mongoUri) {
-      console.error("[DB] FATAL: MONGODB_URI is not set in environment variables.");
-      process.exit(1);
+    if (typeof rawMongoUri !== "string" || !rawMongoUri.trim()) {
+      console.error(
+        "[DB] FATAL: MONGODB_URI is missing, empty, or invalid. Expected mongodb:// or mongodb+srv://",
+      );
+      dbStatus.state = "error";
+      return null;
     }
+
+    const mongoUri = rawMongoUri.trim();
+
+    if (!/^mongodb(?:\+srv)?:\/\//i.test(mongoUri)) {
+      console.error(
+        "[DB] FATAL: MONGODB_URI must start with mongodb:// or mongodb+srv://",
+      );
+      dbStatus.state = "error";
+      return null;
+    }
+
+    console.log(`[DB] Connecting with MongoDB URI: ${maskMongoUri(mongoUri)}`);
+
+    registerConnectionLifecycleHandlers();
 
     const conn = await mongoose.connect(mongoUri, {
       dbName: "shipwise",
       maxPoolSize: 10,
       serverSelectionTimeoutMS: 10000,
       socketTimeoutMS: 45000,
-      useNewUrlParser: true,
-      useUnifiedTopology: true,
-      useCreateIndex: true,
-      useFindAndModify: false,
     });
 
-    dbStatus = { state: "connected", host: conn.connection.host, name: conn.connection.name };
-
-
-    mongoose.connection.on("error", (err) => {
-      const errorType = classifyMongoError(err);
-      console.error(`MongoDB Runtime Error (${errorType}):`, err.message);
-      dbStatus.state = "error";
-    });
-
-    mongoose.connection.on("disconnected", () => {
-      dbStatus.state = "disconnected";
-    });
-
-    mongoose.connection.on("reconnected", () => {
-      dbStatus.state = "connected";
-    });
-
-    process.on("SIGINT", async () => {
-      await mongoose.connection.close();
-      process.exit(0);
-    });
+    dbStatus = {
+      state: "connected",
+      host: conn.connection.host,
+      name: conn.connection.name,
+    };
 
     return conn;
   } catch (error) {
